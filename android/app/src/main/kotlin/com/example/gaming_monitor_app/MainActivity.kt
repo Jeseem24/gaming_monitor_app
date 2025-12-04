@@ -10,7 +10,8 @@ class MainActivity : FlutterActivity() {
 
     private val CHANNEL_USAGE = "usage_access"
     private val CHANNEL_SERVICE = "game_detection"
-    private val CHANNEL_EVENTS = "game_event_channel"
+    // Match Dart: Flutter listens on "game_events"
+    private val CHANNEL_EVENTS = "game_events"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -68,10 +69,11 @@ class MainActivity : FlutterActivity() {
         // -------------------------------------------------------
         // 3. PREPARE CHANNEL FOR GAME EVENTS (KOTLIN → FLUTTER)
         // -------------------------------------------------------
+        // Create the MethodChannel instance so Flutter side can listen.
+        // No handler is needed here — service will invoke methods on this channel.
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL_EVENTS
         )
-        // Handler not needed here. Flutter LISTENS on this channel.
     }
 }

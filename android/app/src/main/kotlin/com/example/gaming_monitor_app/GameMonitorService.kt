@@ -3,6 +3,8 @@ package com.example.gaming_monitor_app
 import android.app.*
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -12,7 +14,6 @@ import java.util.*
 import kotlin.concurrent.timerTask
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
-
 
 class GameMonitorService : Service() {
 
@@ -36,12 +37,12 @@ class GameMonitorService : Service() {
     }
 
     // ---------------------------------------------------------
-    // GAME / APP DETECTION LOOP
+    // GAME / APP DETECTION LOOP (Runs Every 4 Seconds)
     // ---------------------------------------------------------
     private fun startDetectionLoop() {
         Timer().scheduleAtFixedRate(timerTask {
             detectForegroundApp()
-        }, 0, 4000) // 4 sec interval
+        }, 0, 4000)
     }
 
     private fun detectForegroundApp() {
@@ -60,53 +61,64 @@ class GameMonitorService : Service() {
         val recent = stats.maxByOrNull { it.lastTimeUsed } ?: return
         val currentPackage = recent.packageName
 
+        // WHEN APP CHANGES
         if (currentPackage != lastPackage) {
 
-            // Close previous app/game
+            // 1️⃣ CLOSE PREVIOUS SESSION
             if (lastPackage != null) {
                 val durationSec = ((now - lastStartTime) / 1000)
 
-                val event = hashMapOf(
-                    "package_name" to lastPackage!!,
+                val event: HashMap<String, Any?> = hashMapOf(
+                    "package_name" to lastPackage,
                     "start_time" to lastStartTime,
                     "end_time" to now,
                     "duration" to durationSec,
                     "timestamp" to now
                 )
 
-                Log.i("GAME_USAGE", "App closed → $lastPackage | Duration: $durationSec sec")
+                Log.i("GAME_USAGE", "⬅️ App closed → $lastPackage")
+                Log.i("GAME_USAGE", "   END_TIME: $now, DURATION: $durationSec sec")
 
-                // SEND EVENT TO FLUTTER → SQLite
-                val engine = FlutterEngineCache.getInstance()["my_engine"]
-                if (engine != null) {
-                    MethodChannel(engine.dartExecutor.binaryMessenger, "game_events")
-                        .invokeMethod("log_event", event)
-                }
+                // SEND TO FLUTTER (SQLite)
+                sendEventToFlutter(event)
             }
 
-            // New app started
-            if (isGame(currentPackage))
-                Log.i("GAME_USAGE", "Game started → $currentPackage")
-            else
-                Log.i("GAME_USAGE", "App started → $currentPackage")
+            // 2️⃣ START NEW SESSION
+            Log.i("GAME_USAGE", "➡️ App started → $currentPackage")
+            Log.i("GAME_USAGE", "   START_TIME: $now")
 
             lastPackage = currentPackage
             lastStartTime = now
         }
     }
 
-    // Simple game detector (extend later)
-    private fun isGame(pkg: String): Boolean {
-        return pkg.contains("game") ||
-                pkg.contains("pubg") ||
-                pkg.contains("freefire") ||
-                pkg.contains("coc") ||
-                pkg.contains("cod") ||
-                pkg.contains("madout", ignoreCase = true)
+    // ---------------------------------------------------------
+    // SAFE MethodChannel → must run on MAIN THREAD
+    // ---------------------------------------------------------
+    private fun sendEventToFlutter(event: HashMap<String, Any?>) {
+        val engine = FlutterEngineCache.getInstance()["my_engine"]
+        if (engine == null) {
+            Log.e("GAME_SERVICE", "❌ Flutter engine is NULL - cannot send event")
+            return
+        }
+
+        Handler(Looper.getMainLooper()).post {
+            try {
+                MethodChannel(
+                    engine.dartExecutor.binaryMessenger,
+                    "game_events"
+                ).invokeMethod("log_event", event)
+
+                Log.i("GAME_SERVICE", "📩 Event sent to Flutter → $event")
+
+            } catch (e: Exception) {
+                Log.e("GAME_SERVICE", "❌ Error sending event: $e")
+            }
+        }
     }
 
     // ---------------------------------------------------------
-    // FOREGROUND NOTIFICATION
+    // NOTIFICATION SETUP
     // ---------------------------------------------------------
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
