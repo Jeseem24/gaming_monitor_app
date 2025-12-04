@@ -1,6 +1,8 @@
 package com.example.gaming_monitor_app
 
+import android.content.Context
 import android.content.Intent
+import android.app.AppOpsManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
@@ -10,25 +12,27 @@ class MainActivity : FlutterActivity() {
 
     private val CHANNEL_USAGE = "usage_access"
     private val CHANNEL_SERVICE = "game_detection"
-    // Match Dart: Flutter listens on "game_events"
-    private val CHANNEL_EVENTS = "game_events"
+    private val CHANNEL_EVENTS = "game_events"   // Flutter listens here
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Cache engine so service can use MethodChannel
+        // Cache engine so the background service can call Flutter
         FlutterEngineCache
             .getInstance()
             .put("my_engine", flutterEngine)
 
         // -------------------------------------------------------
-        // 1. OPEN USAGE ACCESS SETTINGS
+        // 1️⃣ USAGE ACCESS PERMISSIONS CHANNEL
         // -------------------------------------------------------
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL_USAGE
         ).setMethodCallHandler { call, result ->
+
             when (call.method) {
+
+                // Open Usage Access settings page
                 "open_settings" -> {
                     val intent = Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -36,18 +40,37 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
 
+                // NEW: Check if Usage Access permission is granted
+                "check_usage" -> {
+                    try {
+                        val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+                        val mode = appOps.checkOpNoThrow(
+                            AppOpsManager.OPSTR_GET_USAGE_STATS,
+                            android.os.Process.myUid(),
+                            packageName
+                        )
+                        val granted = mode == AppOpsManager.MODE_ALLOWED
+                        result.success(granted)
+
+                    } catch (e: Exception) {
+                        result.error("ERR", "check_usage failed: ${e.message}", null)
+                    }
+                }
+
                 else -> result.notImplemented()
             }
         }
 
         // -------------------------------------------------------
-        // 2. START BACKGROUND SERVICE
+        // 2️⃣ START BACKGROUND SERVICE FROM FLUTTER
         // -------------------------------------------------------
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL_SERVICE
         ).setMethodCallHandler { call, result ->
+
             when (call.method) {
+
                 "start_service" -> {
                     println("🔥 START_SERVICE CALLED FROM FLUTTER")
 
@@ -67,10 +90,9 @@ class MainActivity : FlutterActivity() {
         }
 
         // -------------------------------------------------------
-        // 3. PREPARE CHANNEL FOR GAME EVENTS (KOTLIN → FLUTTER)
+        // 3️⃣ GAME EVENTS CHANNEL (KOTLIN → FLUTTER)
         // -------------------------------------------------------
-        // Create the MethodChannel instance so Flutter side can listen.
-        // No handler is needed here — service will invoke methods on this channel.
+        // No handler needed — Flutter listens only.
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             CHANNEL_EVENTS
