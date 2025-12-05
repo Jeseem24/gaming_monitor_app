@@ -147,4 +147,12 @@ class GameMonitorService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+    super.onDestroy()
+    Log.i("GAME_SERVICE", "🛑 SERVICE DESTROYED — Foreground & Timer stopped")
+
+    stopForeground(true)
+}
+
 }

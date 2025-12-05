@@ -85,6 +85,16 @@ class MainActivity : FlutterActivity() {
                     result.success("Service Started")
                 }
 
+                "stop_service" -> {
+    println("🛑 STOP_SERVICE CALLED FROM FLUTTER")
+
+    val serviceIntent = Intent(this, GameMonitorService::class.java)
+    stopService(serviceIntent)
+
+    result.success("Service Stopped")
+}
+
+
                 else -> result.notImplemented()
             }
         }
