@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/sync_service.dart';
+import '../services/native_event_handler.dart';
 import '../database.dart';
+import 'pin_verify_screen.dart';
 
 const MethodChannel _serviceChannel = MethodChannel('game_detection');
 
@@ -24,16 +26,22 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   @override
   void initState() {
     super.initState();
+    // Safe: will not show system dialog again if already asked
     _requestNotificationPermission();
     _loadServiceState();
-    _refreshSummary(); // initial load
+    _refreshSummary();
   }
 
   Future<void> _loadServiceState() async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getBool('service_running') ?? false;
     setState(() => _serviceRunning = stored);
-    if (_serviceRunning) SyncService.instance.startSyncLoop();
+    // If serviceRunning true on startup, start sync loop and ensure native listener is running
+    if (_serviceRunning) {
+      // start native listener so service events are handled
+      await NativeEventHandler.instance.start();
+      SyncService.instance.startSyncLoop();
+    }
   }
 
   Future<void> _saveServiceState(bool running) async {
@@ -46,11 +54,17 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     if (!status.isGranted) await Permission.notification.request();
   }
 
+  // start native service + sync loop
   Future<void> _startService() async {
     if (_busy) return;
     setState(() => _busy = true);
 
     try {
+      // Ensure the Dart-side native event handler is active BEFORE asking native to start.
+      // This prevents a race where native immediately sends events while Flutter isn't listening.
+      await NativeEventHandler.instance.start();
+
+      // Now call native to start foreground service
       await _serviceChannel.invokeMethod('start_service');
 
       ScaffoldMessenger.of(context).clearSnackBars();
@@ -58,8 +72,13 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         const SnackBar(content: Text('Background service started')),
       );
 
-      setState(() => _serviceRunning = true);
+      // local state + sync
+      setState(() {
+        _serviceRunning = true;
+      });
       await _saveServiceState(true);
+
+      // start sync loop after service started (so DB events from service will be picked up)
       SyncService.instance.startSyncLoop();
     } catch (e) {
       ScaffoldMessenger.of(context).clearSnackBars();
@@ -71,18 +90,35 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     }
   }
 
+  // stop sync loop and try to stop native service (if native supports it)
   Future<void> _stopService() async {
     if (_busy) return;
     setState(() => _busy = true);
 
+    // require PIN verification before stopping
+    final ok = await showDialog(
+      context: context,
+      builder: (_) => const PinVerifyScreen(),
+    );
+
+    if (ok != true) {
+      if (mounted) setState(() => _busy = false);
+      return;
+    }
+
+    // stop sync & local state immediately
     SyncService.instance.stopSyncLoop();
-    setState(() => _serviceRunning = false);
+    setState(() {
+      _serviceRunning = false;
+    });
     await _saveServiceState(false);
 
+    // attempt to notify native to stop foreground service (native may not implement stop; that's ok)
     try {
       await _serviceChannel.invokeMethod('stop_service');
-    } catch (_) {
-      // OK if not implemented on native side
+      await Future.delayed(const Duration(milliseconds: 300));
+    } catch (e) {
+      // ignore if platform doesn't implement stop_service
     }
 
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -93,11 +129,13 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     if (mounted) setState(() => _busy = false);
   }
 
+  // toggle wrapper
   Future<void> _toggleService() async {
-    if (_serviceRunning)
+    if (_serviceRunning) {
       await _stopService();
-    else
+    } else {
       await _startService();
+    }
   }
 
   Widget _stateBadge({required bool active}) {

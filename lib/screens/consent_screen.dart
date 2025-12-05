@@ -2,9 +2,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gaming_monitor_app/screens/pin_create_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'monitoring_screen.dart';
+import 'notification_gate_screen.dart';
 
 const MethodChannel _usageChannel = MethodChannel('usage_access');
 
@@ -60,12 +62,36 @@ class _ConsentScreenState extends State<ConsentScreen>
     await _checkUsageAccess();
     if (_usageGranted == true) {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('parent_consent', true);
-      await Permission.notification.request();
+      // persist that consent was completed
+      await prefs.setBool('consent_done', true);
+
+      // After consent, we should check notification status.
+      final notifStatus = await Permission.notification.status;
+      if (notifStatus.isGranted) {
+        await prefs.setBool('notif_done', true);
+      } else {
+        await prefs.setBool('notif_done', false);
+      }
+
+      // route to next step (NotificationGate or PIN create)
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MonitoringScreen()),
-      );
+      if (notifStatus.isGranted) {
+        // if pin exists, go to Monitoring
+        final pin = prefs.getString('parent_pin');
+        if (pin == null || pin.isEmpty) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const PinCreateScreen()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MonitoringScreen()),
+          );
+        }
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const NotificationGateScreen()),
+        );
+      }
     } else {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -154,7 +180,9 @@ class _ConsentScreenState extends State<ConsentScreen>
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  '1. Tap "Open Usage Access Settings".\n2. Find "Gaming Monitor" and enable "Permit usage access".\n3. Return here and press "I HAVE ENABLED ACCESS".',
+                  '1. Tap "Open Usage Access Settings".\n'
+                  '2. Find "Gaming Monitor" and enable "Permit usage access".\n'
+                  '3. Return here and press "I HAVE ENABLED ACCESS".',
                   style: TextStyle(fontSize: 15),
                 ),
                 const SizedBox(height: 20),
@@ -234,7 +262,8 @@ class _ConsentScreenState extends State<ConsentScreen>
               ),
               const SizedBox(height: 12),
               const Text(
-                'This app monitors which apps (games) are used and for how long. Only app name and duration are collected — no personal data.',
+                'This app monitors which apps (games) are used and for how long. '
+                'Only app name and duration are collected — no personal data.',
                 style: TextStyle(fontSize: 15, height: 1.5),
                 textAlign: TextAlign.center,
               ),
