@@ -199,7 +199,12 @@ class _ConsentScreenState extends State<ConsentScreen>
                           Navigator.of(context).pop();
                         },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF3D77FF),
+                          backgroundColor: const Color.fromARGB(
+                            255,
+                            61,
+                            119,
+                            255,
+                          ),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                         child: const Text('OPEN USAGE ACCESS SETTINGS'),
