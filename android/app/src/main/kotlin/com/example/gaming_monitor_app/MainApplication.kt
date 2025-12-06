@@ -10,18 +10,15 @@ class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // ----------------------------------------------
-        // PRELOAD FLUTTER ENGINE (fixes 3–5s black screen)
-        // ----------------------------------------------
+        // Preload Flutter engine → removes startup black screen
         val engine = FlutterEngine(this)
 
-        // Use default entrypoint (main.dart → main())
+        // Use default Dart entrypoint (main)
         engine.dartExecutor.executeDartEntrypoint(
             DartExecutor.DartEntrypoint.createDefault()
         )
 
-        // Cache engine
-        FlutterEngineCache.getInstance()
-            .put("preloaded_engine", engine)
+        // Cache engine so MainActivity can reuse it instantly
+        FlutterEngineCache.getInstance().put("preloaded_engine", engine)
     }
 }
