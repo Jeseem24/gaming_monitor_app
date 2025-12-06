@@ -20,7 +20,6 @@ class NativeEventHandler {
     if (call.method == 'log_event') {
       try {
         final raw = call.arguments;
-        // Convert to Map<String, dynamic> safely
         Map data;
         if (raw is Map) {
           data = Map<String, dynamic>.from(raw);
@@ -28,10 +27,8 @@ class NativeEventHandler {
           data = {};
         }
 
-        // Normalize fields and types:
         final packageName = data['package_name']?.toString() ?? 'unknown';
         final gameName = data['game_name']?.toString() ?? packageName;
-        // start_time, end_time, duration, timestamp likely come as numbers (millis / seconds)
         final startTime = (data['start_time'] is num)
             ? (data['start_time'] as num).toInt()
             : int.tryParse(data['start_time']?.toString() ?? '') ?? 0;
@@ -57,12 +54,9 @@ class NativeEventHandler {
           'synced': 0,
         };
 
-        // Insert to SQLite
         await GameDatabase.instance.insertEvent(event);
-        // Optional: return success to native
         return {'status': 'ok'};
       } catch (e) {
-        // ignore: avoid_print
         print('NativeEventHandler error: $e');
         return {'status': 'error', 'message': e.toString()};
       }
