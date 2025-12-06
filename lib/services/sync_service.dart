@@ -1,7 +1,11 @@
 // lib/services/sync_service.dart
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
+
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../database.dart';
 
 class SyncService {
@@ -16,6 +20,53 @@ class SyncService {
     'X-API-KEY': 'secret',
   };
 
+  // =============================================================
+  //  CHILD DEVICE ID — ALWAYS USED AS user_id
+  // =============================================================
+  static const String _childIdKey = "child_device_id";
+
+  /// Internal: returns existing ID or generates a new one
+  Future<String> _getOrCreateChildId() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final saved = prefs.getString(_childIdKey);
+    if (saved != null && saved.isNotEmpty) {
+      return saved;
+    }
+
+    // Generate new ID
+    final random = Random();
+    final id = "child_${random.nextInt(99999999).toString().padLeft(8, '0')}";
+
+    await prefs.setString(_childIdKey, id);
+    print("🆔 NEW CHILD DEVICE ID GENERATED → $id");
+
+    return id;
+  }
+
+  /// Public method used by UI
+  Future<String> getChildId() async => _getOrCreateChildId();
+
+  // =============================================================
+  //  REGENERATE CHILD ID (When parent wants to monitor new child)
+  // =============================================================
+  Future<String> regenerateChildId() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final random = Random();
+    final newId =
+        "child_${random.nextInt(99999999).toString().padLeft(8, '0')}";
+
+    await prefs.setString(_childIdKey, newId);
+
+    print("🆕 CHILD ID REGENERATED → $newId");
+
+    return newId;
+  }
+
+  // =============================================================
+  //  SYNC LOOP
+  // =============================================================
   void startSyncLoop() {
     _timer?.cancel();
     _timer = Timer.periodic(
@@ -34,11 +85,14 @@ class SyncService {
   Future<void> syncPendingEvents() async {
     print("📡 Checking for unsynced events...");
     final pendingEvents = await GameDatabase.instance.getPendingEvents();
+
     if (pendingEvents.isEmpty) {
       print("✅ No pending events");
       return;
     }
+
     print("📥 Found ${pendingEvents.length} events to sync");
+
     for (var event in pendingEvents) {
       final success = await _uploadSingleEvent(event);
       if (success) {
@@ -50,29 +104,47 @@ class SyncService {
     }
   }
 
+  // =============================================================
+  //  UPLOAD EVENT
+  // =============================================================
   Future<bool> _uploadSingleEvent(Map<String, dynamic> event) async {
     try {
       final url = '$_baseUrl/events';
-      // backend expects duration in minutes
+
+      // ALWAYS use child ID
+      final childId = await _getOrCreateChildId();
+
       final durationSec = (event['duration'] is num)
           ? (event['duration'] as num).toInt()
           : 0;
-      final durationMin = (durationSec ~/ 60);
-      final payload = jsonEncode({
-        'user_id': event['user_id'] ?? 'demo_user_1',
-        'game_name': event['game_name'] ?? event['package_name'],
+
+      int durationMin = (durationSec / 60).ceil();
+      if (durationMin <= 0) durationMin = 1;
+
+      final gameName = event['game_name'] ?? event['package_name'];
+
+      final payloadMap = {
+        'user_id': childId,
+        'game_name': gameName,
         'duration': durationMin,
-      });
+      };
+
+      final payload = jsonEncode(payloadMap);
+
+      print("🌐 Sending event → $payload");
 
       final response = await http.post(
         Uri.parse(url),
         headers: _defaultHeaders,
         body: payload,
       );
-      if (response.statusCode == 200 || response.statusCode == 201) return true;
-      print(
-        "⚠️ Server responded with ${response.statusCode}: ${response.body}",
-      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        print("✅ Backend accepted event → ${response.body}");
+        return true;
+      }
+
+      print("⚠️ Server ${response.statusCode}: ${response.body}");
       return false;
     } catch (e) {
       print("🚨 Upload error: $e");
