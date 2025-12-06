@@ -2,9 +2,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:gaming_monitor_app/screens/pin_create_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+// FIXED: Replaced broken package imports with safe relative imports
+import 'pin_create_screen.dart';
 import 'monitoring_screen.dart';
 import 'notification_gate_screen.dart';
 
@@ -44,7 +46,6 @@ class _ConsentScreenState extends State<ConsentScreen>
       if (mounted) setState(() => _usageGranted = allowed);
     } catch (e) {
       if (mounted) setState(() => _usageGranted = false);
-      // ignore: avoid_print
       print('check_usage error: $e');
     }
   }
@@ -53,7 +54,6 @@ class _ConsentScreenState extends State<ConsentScreen>
     try {
       await _usageChannel.invokeMethod('open_settings');
     } catch (e) {
-      // ignore: avoid_print
       print('open_settings error: $e');
     }
   }
@@ -62,10 +62,8 @@ class _ConsentScreenState extends State<ConsentScreen>
     await _checkUsageAccess();
     if (_usageGranted == true) {
       final prefs = await SharedPreferences.getInstance();
-      // persist that consent was completed
       await prefs.setBool('consent_done', true);
 
-      // After consent, we should check notification status.
       final notifStatus = await Permission.notification.status;
       if (notifStatus.isGranted) {
         await prefs.setBool('notif_done', true);
@@ -73,22 +71,24 @@ class _ConsentScreenState extends State<ConsentScreen>
         await prefs.setBool('notif_done', false);
       }
 
-      // route to next step (NotificationGate or PIN create)
       if (!mounted) return;
+
       if (notifStatus.isGranted) {
-        // if pin exists, go to Monitoring
         final pin = prefs.getString('parent_pin');
         if (pin == null || pin.isEmpty) {
-          Navigator.of(context).pushReplacement(
+          Navigator.pushReplacement(
+            context,
             MaterialPageRoute(builder: (_) => const PinCreateScreen()),
           );
         } else {
-          Navigator.of(context).pushReplacement(
+          Navigator.pushReplacement(
+            context,
             MaterialPageRoute(builder: (_) => const MonitoringScreen()),
           );
         }
       } else {
-        Navigator.of(context).pushReplacement(
+        Navigator.pushReplacement(
+          context,
           MaterialPageRoute(builder: (_) => const NotificationGateScreen()),
         );
       }
@@ -108,6 +108,7 @@ class _ConsentScreenState extends State<ConsentScreen>
   Widget _statusRow() {
     Color dotColor;
     String label;
+
     if (_usageGranted == null) {
       dotColor = Colors.grey;
       label = 'Checking usage access…';
@@ -190,45 +191,28 @@ class _ConsentScreenState extends State<ConsentScreen>
                 const SizedBox(height: 12),
                 _statusRow(),
                 const Spacer(),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          _openUsageSettings();
-                          Navigator.of(context).pop();
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color.fromARGB(
-                            255,
-                            61,
-                            119,
-                            255,
-                          ),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                        ),
-                        child: const Text('OPEN USAGE ACCESS SETTINGS'),
-                      ),
-                    ),
-                  ],
+                ElevatedButton(
+                  onPressed: () {
+                    _openUsageSettings();
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF3D77FF),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text('OPEN USAGE ACCESS SETTINGS'),
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          _onIHaveEnabled();
-                        },
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          side: const BorderSide(color: Colors.black12),
-                        ),
-                        child: const Text('I HAVE ENABLED ACCESS'),
-                      ),
-                    ),
-                  ],
+                OutlinedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _onIHaveEnabled();
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: const BorderSide(color: Colors.black12),
+                  ),
+                  child: const Text('I HAVE ENABLED ACCESS'),
                 ),
               ],
             ),
@@ -241,6 +225,7 @@ class _ConsentScreenState extends State<ConsentScreen>
   @override
   Widget build(BuildContext context) {
     final primary = const Color(0xFF3D77FF);
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -273,10 +258,7 @@ class _ConsentScreenState extends State<ConsentScreen>
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: _statusRow(),
-              ),
+              _statusRow(),
               const SizedBox(height: 28),
               ElevatedButton(
                 onPressed: _showHowToSheet,

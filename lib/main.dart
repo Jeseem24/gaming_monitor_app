@@ -1,8 +1,10 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
-import 'package:gaming_monitor_app/screens/installed_games_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
+
+// FIXED: All imports converted to safe relative imports
+import 'screens/installed_games_screen.dart';
 import 'screens/consent_screen.dart';
 import 'screens/notification_gate_screen.dart';
 import 'screens/pin_create_screen.dart';
@@ -10,9 +12,6 @@ import 'screens/monitoring_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // NOTE: We intentionally DO NOT start NativeEventHandler here.
-  // The native background service must only be allowed to send events
-  // after the user has completed onboarding and started monitoring.
   runApp(const GamingMonitorApp());
 }
 
@@ -28,24 +27,17 @@ class GamingMonitorApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3D77FF)),
         scaffoldBackgroundColor: Colors.white,
         elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            foregroundColor: Colors.white, // TEXT COLOR → WHITE
-          ),
+          style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
         ),
       ),
       home: const RootRouter(),
+
+      // FIXED: route defined without package import
       routes: {'/installed_games': (_) => const InstalledGamesScreen()},
     );
   }
 }
 
-/// Root router checks onboarding flags and routes to the correct screen.
-/// Flow (first install only):
-/// 1) request notification system popup (Option A)
-/// 2) Consent screen (usage access)
-/// 3) Notification gate (if still not granted)
-/// 4) PIN create (one-time)
-/// 5) Monitoring
 class RootRouter extends StatefulWidget {
   const RootRouter({super.key});
 
@@ -72,25 +64,20 @@ class _RootRouterState extends State<RootRouter> {
     _notifDone = prefs.getBool('notif_done') ?? false;
     _pinSet = prefs.getBool('pin_set') ?? false;
 
-    // OPTION A: Show system notification permission popup immediately on first app launch
-    // We only request if notif_done is false.
     if (!_notifDone) {
       final status = await Permission.notification.status;
       if (!status.isGranted) {
         final result = await Permission.notification.request();
         if (result.isGranted) {
-          // mark notif done immediately
           await prefs.setBool('notif_done', true);
           _notifDone = true;
         }
       } else {
-        // already granted earlier
         await prefs.setBool('notif_done', true);
         _notifDone = true;
       }
     }
 
-    // After requesting system popup, update loading and allow build to route to next step
     if (mounted) setState(() => _loading = false);
   }
 
@@ -100,19 +87,9 @@ class _RootRouterState extends State<RootRouter> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // Now route based on flags; each screen will itself update flags once completed.
-    if (!_consentDone) {
-      return const ConsentScreen();
-    }
-
-    if (!_notifDone) {
-      // If notification was still not granted after the initial popup, show the gate (no skip).
-      return const NotificationGateScreen();
-    }
-
-    if (!_pinSet) {
-      return const PinCreateScreen();
-    }
+    if (!_consentDone) return const ConsentScreen();
+    if (!_notifDone) return const NotificationGateScreen();
+    if (!_pinSet) return const PinCreateScreen();
 
     return const MonitoringScreen();
   }
