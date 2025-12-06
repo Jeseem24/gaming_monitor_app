@@ -24,44 +24,45 @@ class _NotificationGateScreenState extends State<NotificationGateScreen> {
 
   Future<void> _checkPermission() async {
     final status = await Permission.notification.status;
+
     setState(() {
       _granted = status.isGranted;
       _checking = false;
     });
+
     if (_granted) _routeNext();
   }
 
   Future<void> _requestPermission() async {
     final status = await Permission.notification.request();
-    setState(() {
-      _granted = status.isGranted;
-    });
 
-    final prefs = await SharedPreferences.getInstance();
     if (status.isGranted) {
+      final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('notif_done', true);
       _routeNext();
-    } else if (status.isPermanentlyDenied) {
-      // ask user to open app settings
+      return;
+    }
+
+    if (status.isPermanentlyDenied) {
+      // ONLY here we ask to open settings
       if (!mounted) return;
+
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
           title: const Text('Enable Notifications'),
           content: const Text(
-            'Notifications are required for important alerts. Open app settings to enable notifications.',
+            'Notifications are required. Please enable them from settings.',
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              onPressed: () => Navigator.pop(context),
               child: const Text('CANCEL'),
             ),
             TextButton(
               onPressed: () {
                 openAppSettings();
-                Navigator.of(context).pop();
+                Navigator.pop(context);
               },
               child: const Text('OPEN SETTINGS'),
             ),
@@ -69,11 +70,10 @@ class _NotificationGateScreenState extends State<NotificationGateScreen> {
         ),
       );
     } else {
-      // denied but not permanent — stay on gate and prompt user again
-      if (!mounted) return;
+      // Not granted → keep trying without opening settings
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Please enable notifications to continue.'),
+          content: Text("Please enable notifications to continue"),
         ),
       );
     }
@@ -82,26 +82,32 @@ class _NotificationGateScreenState extends State<NotificationGateScreen> {
   Future<void> _routeNext() async {
     final prefs = await SharedPreferences.getInstance();
     final pin = prefs.getString('parent_pin');
+
     if (pin == null || pin.isEmpty) {
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
+      Navigator.pushReplacement(
+        context,
         MaterialPageRoute(builder: (_) => const PinCreateScreen()),
       );
-    } else {
-      if (!mounted) return;
-      await prefs.setBool('notif_done', true);
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MonitoringScreen()),
-      );
+      return;
     }
+
+    await prefs.setBool('notif_done', true);
+
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const MonitoringScreen()),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final primary = const Color(0xFF3D77FF);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Notification Permission'),
+        title: const Text("Notification Permission"),
         backgroundColor: primary,
       ),
       body: SafeArea(
@@ -121,28 +127,33 @@ class _NotificationGateScreenState extends State<NotificationGateScreen> {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'We need notification permission to deliver important alerts to parents. Please enable notifications to continue.',
-                      style: TextStyle(fontSize: 15),
+                      'We need notification permission to deliver important alerts. Please enable notifications.',
                     ),
                     const SizedBox(height: 24),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: _granted ? null : _requestPermission,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: primary,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            child: Text(
-                              _granted ? 'ENABLED' : 'ENABLE NOTIFICATIONS',
-                            ),
+
+                    SizedBox(
+                      width: double.infinity, // make the button wide
+                      child: ElevatedButton(
+                        onPressed: _granted ? null : _requestPermission,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primary,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                      ],
+                        child: Text(
+                          _granted ? "ENABLED" : "ENABLE NOTIFICATIONS",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
                     ),
+
                     const SizedBox(height: 12),
-                    const SizedBox(height: 8),
                     const Text(
                       'Notifications are required. Please enable to proceed.',
                       style: TextStyle(color: Colors.black54),
