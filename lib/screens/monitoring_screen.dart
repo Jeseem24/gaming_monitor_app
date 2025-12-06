@@ -170,7 +170,11 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
       if (report == null || twin == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to fetch backend data")),
+          const SnackBar(
+            content: Text(
+              "No backend data yet — monitoring will upload activity automatically",
+            ),
+          ),
         );
         return;
       }
