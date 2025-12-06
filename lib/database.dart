@@ -37,17 +37,26 @@ class GameDatabase {
     ''');
   }
 
+  // -----------------------------------------------------------
+  // INSERT EVENT
+  // -----------------------------------------------------------
   Future<int> insertEvent(Map<String, dynamic> event) async {
     final db = await database;
     print("🔥 [DB] INSERT EVENT → $event");
     return db.insert("game_events", event);
   }
 
+  // -----------------------------------------------------------
+  // GET PENDING UNSYNCED EVENTS
+  // -----------------------------------------------------------
   Future<List<Map<String, dynamic>>> getPendingEvents() async {
     final db = await database;
     return await db.query("game_events", where: "synced = ?", whereArgs: [0]);
   }
 
+  // -----------------------------------------------------------
+  // MARK EVENT AS SYNCED
+  // -----------------------------------------------------------
   Future<void> markEventSynced(int id) async {
     final db = await database;
     await db.update(
@@ -58,11 +67,24 @@ class GameDatabase {
     );
   }
 
+  // -----------------------------------------------------------
+  // DELETE OLD EVENTS
+  // -----------------------------------------------------------
   Future<void> deleteOlderThan(int days) async {
     final db = await database;
     await db.delete(
       "game_events",
       where: "timestamp <= datetime('now', '-$days days')",
     );
+  }
+
+  // -----------------------------------------------------------
+  // CLEAR ALL EVENTS (NEW)
+  // Called when a new child_id is generated
+  // -----------------------------------------------------------
+  Future<void> clearAllEvents() async {
+    final db = await database;
+    print("🧹 [DB] CLEARING ALL LOCAL EVENTS...");
+    await db.delete("game_events");
   }
 }
