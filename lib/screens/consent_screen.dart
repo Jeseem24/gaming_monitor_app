@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// FIXED: Replaced broken package imports with safe relative imports
+// FIXED: Relative imports
 import 'pin_create_screen.dart';
 import 'monitoring_screen.dart';
 import 'notification_gate_screen.dart';
@@ -60,32 +60,26 @@ class _ConsentScreenState extends State<ConsentScreen>
 
   Future<void> _onIHaveEnabled() async {
     await _checkUsageAccess();
+
     if (_usageGranted == true) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('consent_done', true);
 
       final notifStatus = await Permission.notification.status;
-      if (notifStatus.isGranted) {
-        await prefs.setBool('notif_done', true);
-      } else {
-        await prefs.setBool('notif_done', false);
-      }
+      await prefs.setBool('notif_done', notifStatus.isGranted);
 
       if (!mounted) return;
 
       if (notifStatus.isGranted) {
         final pin = prefs.getString('parent_pin');
-        if (pin == null || pin.isEmpty) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const PinCreateScreen()),
-          );
-        } else {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const MonitoringScreen()),
-          );
-        }
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => (pin == null || pin.isEmpty)
+                ? const PinCreateScreen()
+                : const MonitoringScreen(),
+          ),
+        );
       } else {
         Navigator.pushReplacement(
           context,
@@ -182,7 +176,7 @@ class _ConsentScreenState extends State<ConsentScreen>
                 const SizedBox(height: 12),
                 const Text(
                   '1. Tap "Open Usage Access Settings".\n'
-                  '2. Find "Gaming Monitor" and enable "Permit usage access".\n'
+                  '2. Find "Digital Twin Monitor" and enable "Permit usage access".\n'
                   '3. Return here and press "I HAVE ENABLED ACCESS".',
                   style: TextStyle(fontSize: 15),
                 ),
@@ -191,28 +185,44 @@ class _ConsentScreenState extends State<ConsentScreen>
                 const SizedBox(height: 12),
                 _statusRow(),
                 const Spacer(),
-                ElevatedButton(
-                  onPressed: () {
-                    _openUsageSettings();
-                    Navigator.pop(context);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF3D77FF),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+
+                /// ✅ FIXED BUTTON WIDTH — full width for both buttons
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      _openUsageSettings();
+                      Navigator.pop(context);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF3D77FF),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('OPEN USAGE ACCESS SETTINGS'),
                   ),
-                  child: const Text('OPEN USAGE ACCESS SETTINGS'),
                 ),
+
                 const SizedBox(height: 12),
-                OutlinedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _onIHaveEnabled();
-                  },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    side: const BorderSide(color: Colors.black12),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _onIHaveEnabled();
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: const BorderSide(color: Colors.black12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('I HAVE ENABLED ACCESS'),
                   ),
-                  child: const Text('I HAVE ENABLED ACCESS'),
                 ),
               ],
             ),
