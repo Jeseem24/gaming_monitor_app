@@ -1,5 +1,6 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
+import 'package:gaming_monitor_app/screens/installed_games_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'screens/consent_screen.dart';
@@ -24,11 +25,16 @@ class GamingMonitorApp extends StatelessWidget {
       title: 'Gaming Monitor',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3D77FF)),
         scaffoldBackgroundColor: Colors.white,
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            foregroundColor: Colors.white, // TEXT COLOR → WHITE
+          ),
+        ),
       ),
       home: const RootRouter(),
+      routes: {'/installed_games': (_) => const InstalledGamesScreen()},
     );
   }
 }
