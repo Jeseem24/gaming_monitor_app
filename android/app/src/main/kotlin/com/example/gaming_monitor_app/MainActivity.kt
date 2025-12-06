@@ -18,10 +18,10 @@ import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 class MainActivity : FlutterActivity() {
 
-    // Fast launch using preloaded engine
     override fun provideFlutterEngine(context: Context): FlutterEngine {
         return FlutterEngineCache.getInstance()["preloaded_engine"]!!
     }
@@ -29,20 +29,15 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val TAG = "MainActivity"
         private const val CHANNEL_INSTALLED = "installed_apps"
-
-        // MEMORY CACHE ONLY → FIXES ICON ISSUE
         val iconCache: MutableMap<String, ByteArray?> = mutableMapOf()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Allow background service to use this engine
+        // Cache engine for GameMonitorService
         FlutterEngineCache.getInstance().put("my_engine", flutterEngine)
 
-        // ============================================================
-        // INSTALLED APPS CHANNEL
-        // ============================================================
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_INSTALLED)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -56,14 +51,15 @@ class MainActivity : FlutterActivity() {
 
                     "refresh_installed" -> {
                         GlobalScope.launch(Dispatchers.IO) {
-                            iconCache.clear()   // no disk cache anymore
+                            iconCache.clear()
+                            clearDiskCache()
                             withContext(Dispatchers.Main) { result.success(true) }
                         }
                     }
 
                     "set_override" -> {
-                        val pkg = call.argument<String>("package")!!
-                        val value = call.argument<String>("value")!!
+                        val pkg = call.argument<String>("package") ?: ""
+                        val value = call.argument<String>("value") ?: ""
                         GlobalScope.launch(Dispatchers.IO) {
                             val ok = setOverride(pkg, value)
                             withContext(Dispatchers.Main) { result.success(ok) }
@@ -71,7 +67,7 @@ class MainActivity : FlutterActivity() {
                     }
 
                     "clear_override" -> {
-                        val pkg = call.argument<String>("package")!!
+                        val pkg = call.argument<String>("package") ?: ""
                         GlobalScope.launch(Dispatchers.IO) {
                             val ok = clearOverride(pkg)
                             withContext(Dispatchers.Main) { result.success(ok) }
@@ -82,42 +78,34 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // ============================================================
-        // START / STOP SERVICE
-        // ============================================================
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "game_detection")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-
                     "start_service" -> {
                         try {
-                            startForegroundService(Intent(this, GameMonitorService::class.java))
+                            val intent = Intent(this, GameMonitorService::class.java)
+                            startForegroundService(intent)
                             result.success(true)
                         } catch (e: Exception) {
-                            result.error("ERR", "$e", null)
+                            result.error("ERR", "Failed to start service: $e", null)
                         }
                     }
-
                     "stop_service" -> {
                         try {
-                            stopService(Intent(this, GameMonitorService::class.java))
+                            val intent = Intent(this, GameMonitorService::class.java)
+                            stopService(intent)
                             result.success(true)
                         } catch (e: Exception) {
-                            result.error("ERR", "$e", null)
+                            result.error("ERR", "Failed to stop service: $e", null)
                         }
                     }
-
                     else -> result.notImplemented()
                 }
             }
 
-        // ============================================================
-        // USAGE ACCESS PERMISSION
-        // ============================================================
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "usage_access")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-
                     "check_usage" -> {
                         try {
                             val appOps = getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -128,86 +116,111 @@ class MainActivity : FlutterActivity() {
                             )
                             result.success(mode == AppOpsManager.MODE_ALLOWED)
                         } catch (e: Exception) {
-                            result.error("ERR", "$e", null)
+                            result.error("ERR", "check_usage failed: $e", null)
                         }
                     }
-
                     "open_settings" -> {
-                        val intent = Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
-                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                        startActivity(intent)
-                        result.success(true)
+                        try {
+                            val intent = Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("ERR", "open_settings failed: $e", null)
+                        }
                     }
-
                     else -> result.notImplemented()
                 }
             }
 
-        // ============================================================
-        // NOTIFICATION PERMISSION POPUP
-        // ============================================================
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "notification_permission")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-
-                    "check" ->
-                        result.success(NotificationManagerCompat.from(this).areNotificationsEnabled())
-
+                    "check" -> {
+                        val enabled = NotificationManagerCompat.from(this).areNotificationsEnabled()
+                        result.success(enabled)
+                    }
                     "request" -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            requestPermissions(
-                                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
-                                9911
-                            )
-                        } else {
-                            showNotificationPermissionPopup()
+                            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 9911)
+                            result.success(true)
+                            return@setMethodCallHandler
                         }
+
+                        try {
+                            val manager = NotificationManagerCompat.from(this)
+                            val channelId = "perm_test_channel"
+
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                val channel = android.app.NotificationChannel(
+                                    channelId,
+                                    "Permission Test",
+                                    android.app.NotificationManager.IMPORTANCE_HIGH
+                                )
+                                getSystemService(android.app.NotificationManager::class.java)
+                                    ?.createNotificationChannel(channel)
+                            }
+
+                            val notification = NotificationCompat.Builder(this, channelId)
+                                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                                .setContentTitle("Permission Needed")
+                                .setContentText("Enable notifications for monitoring to work.")
+                                .setAutoCancel(true)
+                                .build()
+
+                            manager.notify(9912, notification)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Notification request failed: $e")
+                        }
+
                         result.success(true)
                     }
-
                     else -> result.notImplemented()
                 }
             }
     }
 
-    // ============================================================
-    // INSTALLED APPS LIST (NO DISK CACHE)
-    // ============================================================
     private fun fetchInstalledApps(): List<Map<String, Any?>> {
         val pm = packageManager
-        val prefs = getSharedPreferences("installed_overrides", MODE_PRIVATE)
-        val list = mutableListOf<Map<String, Any?>>()
+        val installed = pm.getInstalledApplications(0)
+        val prefs = getSharedPreferences("installed_overrides", Context.MODE_PRIVATE)
+        val out = mutableListOf<Map<String, Any?>>()
 
-        for (info in pm.getInstalledApplications(0)) {
+        for (info in installed) {
             try {
-                val pkg = info.packageName
-                if (pkg.contains("android") || pkg.contains("google")) continue
+                val pkg = info.packageName ?: continue
 
-                val label = pm.getApplicationLabel(info).toString()
-                val autoIsGame = detectGame(info, label)
-                val override = prefs.getString("override_pkg_$pkg", null)
+                // Skip common system packages
+                if ((info.flags and ApplicationInfo.FLAG_SYSTEM) != 0) {
+                    if (pkg.contains("android") || pkg.contains("google") || pkg.contains("com.android")) continue
+                }
 
-                val effectiveIsGame = when (override) {
+                val label = try { pm.getApplicationLabel(info)?.toString() ?: pkg } catch (_: Exception) { pkg }
+
+                val autoIsGame = detectGameHeuristic(pm, info, label, pkg)
+                val overrideValue = prefs.getString("override_pkg_$pkg", null)
+
+                val effectiveIsGame = when (overrideValue) {
                     "game" -> true
                     "app" -> false
                     else -> autoIsGame
                 }
 
-                // FIXED: ALWAYS LOAD ICON PROPERLY
                 val iconBytes = iconCache[pkg] ?: run {
                     val drawable = pm.getApplicationIcon(info)
-                    val bytes = convertDrawable(drawable)
+                    val bytes = convertDrawableToPNGBytes(drawable)
                     iconCache[pkg] = bytes
+                    saveIconToDisk(pkg, bytes)
                     bytes
                 }
 
-                list.add(
+                out.add(
                     mapOf(
                         "package" to pkg,
                         "label" to label,
                         "isGame" to effectiveIsGame,
                         "autoIsGame" to autoIsGame,
-                        "override" to override,
+                        "override" to overrideValue,
                         "icon" to iconBytes
                     )
                 )
@@ -215,97 +228,103 @@ class MainActivity : FlutterActivity() {
             } catch (_: Exception) {}
         }
 
-        list.sortBy { (it["label"] as String).lowercase() }
-        return list
+        out.sortBy { (it["label"] as? String)?.lowercase() ?: "" }
+        return out
     }
 
-    private fun detectGame(info: ApplicationInfo, label: String): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            info.category == ApplicationInfo.CATEGORY_GAME
-        ) return true
+    private fun detectGameHeuristic(
+        pm: android.content.pm.PackageManager,
+        info: ApplicationInfo,
+        label: String,
+        pkg: String
+    ): Boolean {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                info.category == ApplicationInfo.CATEGORY_GAME
+            ) return true
 
-        val l = label.lowercase()
-        return listOf("game", "battle", "arena", "clash", "fight").any { l.contains(it) }
+            val lowerLabel = label.lowercase()
+            val labelKeywords = listOf("game", "fight", "battle", "clash", "racing", "arena")
+            if (labelKeywords.any { lowerLabel.contains(it) }) return true
+
+            val lowerPkg = pkg.lowercase()
+            val pkgKeywords = listOf("game", "pubg", "bgmi", "clash", "minecraft", "roblox")
+            if (pkgKeywords.any { lowerPkg.contains(it) }) return true
+
+            val installer = pm.getInstallerPackageName(pkg) ?: ""
+            if (installer.contains("play")) return true
+
+        } catch (_: Exception) {}
+
+        return false
     }
 
-    private fun convertDrawable(drawable: Drawable): ByteArray? {
+    private fun convertDrawableToPNGBytes(drawable: Drawable): ByteArray? {
         return try {
             val bitmap = when (drawable) {
                 is BitmapDrawable -> drawable.bitmap
                 else -> {
-                    val b = Bitmap.createBitmap(
-                        drawable.intrinsicWidth.coerceAtLeast(64),
-                        drawable.intrinsicHeight.coerceAtLeast(64),
-                        Bitmap.Config.ARGB_8888
-                    )
-                    val canvas = Canvas(b)
+                    val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 64
+                    val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 64
+                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bmp)
                     drawable.setBounds(0, 0, canvas.width, canvas.height)
                     drawable.draw(canvas)
-                    b
+                    bmp
                 }
             }
 
-            ByteArrayOutputStream().apply {
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, this)
-            }.toByteArray()
+            val baos = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, baos)
+            baos.toByteArray()
+
         } catch (e: Exception) {
-            Log.e(TAG, "Icon convert failed: $e")
+            Log.e(TAG, "convertDrawableToPNGBytes error: $e")
             null
         }
     }
 
+    private fun getIconCacheFile(pkg: String): File {
+        val dir = File(cacheDir, "icons")
+        if (!dir.exists()) dir.mkdirs()
+        return File(dir, "$pkg.png")
+    }
+
+    private fun loadIconFromDisk(pkg: String): ByteArray? {
+        val f = getIconCacheFile(pkg)
+        return if (f.exists()) f.readBytes() else null
+    }
+
+    private fun saveIconToDisk(pkg: String, bytes: ByteArray?) {
+        if (bytes == null) return
+        val f = getIconCacheFile(pkg)
+        f.writeBytes(bytes)
+    }
+
+    private fun clearDiskCache() {
+        val dir = File(cacheDir, "icons")
+        if (dir.exists()) dir.deleteRecursively()
+    }
+
     private fun setOverride(pkg: String, value: String): Boolean {
         return try {
-            getSharedPreferences("installed_overrides", MODE_PRIVATE)
-                .edit()
-                .putString("override_pkg_$pkg", value)
-                .apply()
+            val prefs = getSharedPreferences("installed_overrides", Context.MODE_PRIVATE)
+            prefs.edit().putString("override_pkg_$pkg", value).apply()
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Override save failed: $e")
+            Log.e(TAG, "setOverride error: $e")
             false
         }
     }
 
     private fun clearOverride(pkg: String): Boolean {
         return try {
-            getSharedPreferences("installed_overrides", MODE_PRIVATE)
-                .edit()
-                .remove("override_pkg_$pkg")
-                .apply()
+            val prefs = getSharedPreferences("installed_overrides", Context.MODE_PRIVATE)
+            prefs.edit().remove("override_pkg_$pkg").apply()
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Override clear failed: $e")
+            Log.e(TAG, "clearOverride error: $e")
             false
-        }
-    }
-
-    private fun showNotificationPermissionPopup() {
-        try {
-            val manager = NotificationManagerCompat.from(this)
-            val channelId = "perm_test"
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = android.app.NotificationChannel(
-                    channelId,
-                    "Permission Test",
-                    android.app.NotificationManager.IMPORTANCE_HIGH
-                )
-                getSystemService(android.app.NotificationManager::class.java)
-                    ?.createNotificationChannel(channel)
-            }
-
-            val notif = NotificationCompat.Builder(this, channelId)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("Permission Needed")
-                .setContentText("Please enable notifications.")
-                .setAutoCancel(true)
-                .build()
-
-            manager.notify(9999, notif)
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Notification request failed: $e")
         }
     }
 }
