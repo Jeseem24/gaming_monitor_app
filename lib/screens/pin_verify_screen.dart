@@ -70,17 +70,29 @@ class _PinVerifyScreenState extends State<PinVerifyScreen> {
           onPressed: () => Navigator.of(context).pop(false),
           child: const Text('CANCEL'),
         ),
-        ElevatedButton(
-          onPressed: _checking ? null : _verify,
-          child: _checking
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('CONFIRM'),
-        ),
-      ],
+  ElevatedButton(
+    onPressed: _checking ? null : _verify,
+    style: ElevatedButton.styleFrom(
+      backgroundColor: const Color(0xFF3D77FF), // Theme blue
+      foregroundColor: Colors.white,
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 22),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    child: _checking
+        ? const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Colors.white,
+            ),
+          )
+        : const Text(
+            'CONFIRM',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+  ),
+],
     );
   }
 }
