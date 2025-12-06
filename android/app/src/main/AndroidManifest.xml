@@ -45,14 +45,12 @@
             </intent-filter>
         </activity>
 
-        <!-- FIXED FOREGROUND SERVICE -->
         <service
             android:name=".GameMonitorService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Reboot receiver -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -69,7 +67,6 @@
 
     </application>
 
-    <!-- Queries for Installed Apps -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT" />
