@@ -22,7 +22,6 @@ class GameMonitorService : Service() {
     private val CHANNEL_ID = "game_monitor_channel"
     private val LOG_TAG = "GAME_SERVICE"
 
-    // session tracking
     private var lastPackage: String? = null
     private var lastStartTime: Long = 0
     private var detectionTimer: Timer? = null
@@ -44,26 +43,19 @@ class GameMonitorService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-
         val restartIntent = Intent(applicationContext, GameMonitorService::class.java)
         startService(restartIntent)
-
         log("TASK REMOVED → SERVICE RESTARTED")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         log("SERVICE DESTROYED")
-
         detectionTimer?.cancel()
         detectionTimer = null
-
         try { stopForeground(true) } catch (_: Exception) {}
     }
 
-    // -----------------------------------------------------------------------
-    // Create notification channel
-    // -----------------------------------------------------------------------
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val chan = NotificationChannel(
@@ -73,7 +65,6 @@ class GameMonitorService : Service() {
             )
             chan.enableLights(false)
             chan.enableVibration(false)
-
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(chan)
         }
@@ -91,9 +82,6 @@ class GameMonitorService : Service() {
         log("FOREGROUND NOTIFICATION ACTIVE")
     }
 
-    // -----------------------------------------------------------------------
-    // Parent override
-    // -----------------------------------------------------------------------
     private fun readParentOverride(pkg: String): String? {
         return try {
             val prefs = getSharedPreferences("installed_overrides", MODE_PRIVATE)
@@ -104,38 +92,27 @@ class GameMonitorService : Service() {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Is Game ?
-    // -----------------------------------------------------------------------
     private fun isGameApp(pkg: String): Boolean {
-        // Parent override wins
         val override = readParentOverride(pkg)
         if (override != null) return override == "game"
 
         return try {
             val info = packageManager.getApplicationInfo(pkg, 0)
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 if (info.category == ApplicationInfo.CATEGORY_GAME) return true
             }
-
             val label = packageManager.getApplicationLabel(info).toString().lowercase()
             val keywords = listOf("game", "battle", "fight", "arena", "clash", "royale")
             if (keywords.any { label.contains(it) }) return true
-
             val pk = pkg.lowercase()
             val pkgKeys = listOf("ff", "bgmi", "pubg", "clash", "arena")
             if (pkgKeys.any { pk.contains(it) }) return true
-
             false
         } catch (_: Exception) {
             false
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Detection loop
-    // -----------------------------------------------------------------------
     private fun startDetectionLoop() {
         detectionTimer?.cancel()
         detectionTimer = Timer()
@@ -164,8 +141,7 @@ class GameMonitorService : Service() {
             val recent = stats.maxByOrNull { it.lastTimeUsed } ?: return
             val currentPackage = recent.packageName ?: return
 
-            if (currentPackage.contains("launcher") || currentPackage.contains("systemui"))
-                return
+            if (currentPackage.contains("launcher") || currentPackage.contains("systemui")) return
 
             if (currentPackage != lastPackage) {
                 val nowTs = now
@@ -183,7 +159,6 @@ class GameMonitorService : Service() {
 
                 lastPackage = currentPackage
                 lastStartTime = nowTs
-
                 log("APP STARTED → $currentPackage")
             }
 
@@ -192,9 +167,6 @@ class GameMonitorService : Service() {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // DIRECT DATABASE INSERT for RELIABLE STORAGE
-    // -----------------------------------------------------------------------
     private fun insertEventToDatabase(pkg: String, start: Long, end: Long, duration: Long) {
         try {
             val db = openOrCreateDatabase("gaming_monitor.db", MODE_PRIVATE, null)
@@ -234,9 +206,6 @@ class GameMonitorService : Service() {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Send event to Flutter (optional)
-    // -----------------------------------------------------------------------
     private fun sendEventToFlutter(pkg: String, start: Long, end: Long, duration: Long) {
         try {
             val engine = FlutterEngineCache.getInstance()["my_engine"]
@@ -264,9 +233,6 @@ class GameMonitorService : Service() {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Logging
-    // -----------------------------------------------------------------------
     private fun log(msg: String) {
         Log.i(LOG_TAG, "[$LOG_TAG] $msg")
     }
