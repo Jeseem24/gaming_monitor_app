@@ -2,9 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Simple PIN verification dialog. Call with:
-/// final ok = await showDialog(context: context, builder: (_) => const PinVerifyScreen());
-/// returns true if verified else false / null.
 class PinVerifyScreen extends StatefulWidget {
   const PinVerifyScreen({super.key});
 
@@ -23,15 +20,18 @@ class _PinVerifyScreenState extends State<PinVerifyScreen> {
       _checking = true;
       _error = null;
     });
+
     final prefs = await SharedPreferences.getInstance();
     final pin = prefs.getString('parent_pin') ?? '';
-    await Future.delayed(const Duration(milliseconds: 300)); // small UX delay
+
+    await Future.delayed(const Duration(milliseconds: 250));
+
     if (_ctrl.text.trim() == pin && pin.isNotEmpty) {
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.pop(context, true);
     } else {
       setState(() {
-        _error = 'Incorrect PIN';
+        _error = "Incorrect PIN";
         _checking = false;
       });
     }
@@ -39,60 +39,111 @@ class _PinVerifyScreenState extends State<PinVerifyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Enter PIN to Confirm'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _ctrl,
-            keyboardType: TextInputType.number,
-            obscureText: _obscure,
-            maxLength: 4,
-            decoration: InputDecoration(
-              counterText: '',
-              hintText: '4-digit PIN',
-              suffixIcon: IconButton(
-                icon: Icon(_obscure ? Icons.visibility : Icons.visibility_off),
-                onPressed: () => setState(() => _obscure = !_obscure),
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 26, 22, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Title
+            const Text(
+              "Enter PIN to Confirm",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+            ),
+
+            const SizedBox(height: 18),
+
+            // TextField
+            TextField(
+              controller: _ctrl,
+              maxLength: 4,
+              obscureText: _obscure,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(
+                hintText: "4-digit PIN",
+                filled: true,
+                fillColor: Colors.grey.shade100,
+                counterText: "",
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscure ? Icons.visibility : Icons.visibility_off,
+                    color: Colors.grey.shade600,
+                  ),
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                ),
               ),
+              onSubmitted: (_) => _verify(),
             ),
-            onSubmitted: (_) => _verify(),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 6),
-            Text(_error!, style: const TextStyle(color: Colors.red)),
+
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: const TextStyle(color: Colors.red, fontSize: 14),
+              ),
+            ],
+
+            const SizedBox(height: 16),
+
+            // Buttons Row
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text("CANCEL", style: TextStyle(fontSize: 15)),
+                ),
+                const SizedBox(width: 6),
+                ElevatedButton(
+                  onPressed: _checking ? null : _verify,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF3D77FF),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 22,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: _checking
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          "CONFIRM",
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                ),
+              ],
+            ),
           ],
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('CANCEL'),
         ),
-  ElevatedButton(
-    onPressed: _checking ? null : _verify,
-    style: ElevatedButton.styleFrom(
-      backgroundColor: const Color(0xFF3D77FF), // Theme blue
-      foregroundColor: Colors.white,
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 22),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-    ),
-    child: _checking
-        ? const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Colors.white,
-            ),
-          )
-        : const Text(
-            'CONFIRM',
-            style: TextStyle(fontWeight: FontWeight.w600),
-          ),
-  ),
-],
+      ),
     );
   }
 }
