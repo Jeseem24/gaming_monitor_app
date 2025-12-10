@@ -1,8 +1,7 @@
 // lib/services/sync_service.dart
+
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
-
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -20,134 +19,141 @@ class SyncService {
     'X-API-KEY': 'secret',
   };
 
-  // =============================================================
-  //  CHILD DEVICE ID — ALWAYS USED AS user_id
-  // =============================================================
-  static const String _childIdKey = "child_device_id";
-
-  /// Internal: returns existing ID or generates a new one
-  Future<String> _getOrCreateChildId() async {
+  // --------------------------------------------------------------
+  //  SAFE CHILD ID FETCH
+  // --------------------------------------------------------------
+  Future<String?> _getActiveChildId() async {
     final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString("selected_child_id");
 
-    final saved = prefs.getString(_childIdKey);
-    if (saved != null && saved.isNotEmpty) {
-      return saved;
+    if (id == null || id.trim().isEmpty) {
+      print("⚠️ No child selected → Sync paused");
+      return null;
     }
-
-    // Generate new ID
-    final random = Random();
-    final id = "child_${random.nextInt(99999999).toString().padLeft(8, '0')}";
-
-    await prefs.setString(_childIdKey, id);
-    print("🆔 NEW CHILD DEVICE ID GENERATED → $id");
 
     return id;
   }
 
-  /// Public method used by UI
-  Future<String> getChildId() async => _getOrCreateChildId();
+  // For UI screens:
+  Future<String?> getChildId() async => _getActiveChildId();
 
-  // =============================================================
-  //  REGENERATE CHILD ID (When parent wants to monitor new child)
-  // =============================================================
-  Future<String> regenerateChildId() async {
-    final prefs = await SharedPreferences.getInstance();
+  // --------------------------------------------------------------
+  //  ENSURE SYNC LOOP ALWAYS RUNS ON APP STARTUP
+  // --------------------------------------------------------------
+  bool _syncStarted = false;
 
-    final random = Random();
-    final newId =
-        "child_${random.nextInt(99999999).toString().padLeft(8, '0')}";
-
-    await prefs.setString(_childIdKey, newId);
-
-    print("🆕 CHILD ID REGENERATED → $newId");
-
-    return newId;
+  void ensureStarted() {
+    if (_syncStarted) return;
+    _syncStarted = true;
+    startSyncLoop();
   }
 
-  // =============================================================
+  // --------------------------------------------------------------
   //  SYNC LOOP
-  // =============================================================
+  // --------------------------------------------------------------
   void startSyncLoop() {
     _timer?.cancel();
+
     _timer = Timer.periodic(
       const Duration(seconds: 30),
-      (timer) => syncPendingEvents(),
+      (_) => syncPendingEvents(),
     );
-    print("🔄 SYNC LOOP STARTED (every 30 seconds)");
+
+    print("🔄 SYNC LOOP ACTIVE (every 30 sec)");
   }
 
   void stopSyncLoop() {
     _timer?.cancel();
     _timer = null;
-    print("⏹ SYNC LOOP STOPPED");
+    _syncStarted = false;
+    print("⏹ Sync loop stopped");
   }
 
+  // --------------------------------------------------------------
+  //  SYNC PENDING EVENTS
+  // --------------------------------------------------------------
   Future<void> syncPendingEvents() async {
-    print("📡 Checking for unsynced events...");
-    final pendingEvents = await GameDatabase.instance.getPendingEvents();
+    print("🔎 Checking for pending events…");
 
-    if (pendingEvents.isEmpty) {
-      print("✅ No pending events");
+    final childId = await _getActiveChildId();
+    if (childId == null) {
+      print("⛔ No child selected → Skipping sync");
       return;
     }
 
-    print("📥 Found ${pendingEvents.length} events to sync");
+    final pending = await GameDatabase.instance.getPendingEvents();
 
-    for (var event in pendingEvents) {
-      final success = await _uploadSingleEvent(event);
-      if (success) {
+    if (pending.isEmpty) {
+      print("✅ No events to sync");
+      return;
+    }
+
+    print("📦 Found ${pending.length} events to sync");
+
+    for (final event in pending) {
+      final ok = await _uploadSingleEvent(event, childId);
+
+      if (ok) {
         await GameDatabase.instance.markEventSynced(event['id']);
-        print("✔ EVENT SYNCED (ID = ${event['id']})");
+        print("✔ Synced event ID ${event['id']}");
       } else {
-        print("❌ Upload failed, will retry later");
+        print("❗ Event upload failed → Will retry later");
       }
     }
   }
 
-  // =============================================================
-  //  UPLOAD EVENT
-  // =============================================================
-  Future<bool> _uploadSingleEvent(Map<String, dynamic> event) async {
+  // --------------------------------------------------------------
+  //  UPLOAD 1 EVENT
+  // --------------------------------------------------------------
+  Future<bool> _uploadSingleEvent(
+    Map<String, dynamic> event,
+    String childId,
+  ) async {
     try {
       final url = '$_baseUrl/events';
 
-      // ALWAYS use child ID
-      final childId = await _getOrCreateChildId();
+      // Duration correction (detect ms vs sec)
+      int raw = (event['duration'] is num) ? event['duration'] as int : 0;
 
-      final durationSec = (event['duration'] is num)
-          ? (event['duration'] as num).toInt()
-          : 0;
+      // If value looks like milliseconds, convert to seconds
+      if (raw > 30000) raw ~/= 1000;
 
-      int durationMin = (durationSec / 60).ceil();
-      if (durationMin <= 0) durationMin = 1;
+      int minutes = (raw / 60).ceil();
+      if (minutes < 1) minutes = 1;
 
-      final gameName = event['game_name'] ?? event['package_name'];
+      final gameName =
+          event['game_name']?.toString() ?? event['package_name']?.toString();
 
-      final payloadMap = {
-        'user_id': childId,
-        'game_name': gameName,
-        'duration': durationMin,
+      final payload = {
+        "user_id": childId,
+        "game_name": gameName,
+        "duration": minutes,
       };
 
-      final payload = jsonEncode(payloadMap);
+      print("🌐 Uploading event → ${jsonEncode(payload)}");
 
-      print("🌐 Sending event → $payload");
-
-      final response = await http.post(
+      final res = await http.post(
         Uri.parse(url),
         headers: _defaultHeaders,
-        body: payload,
+        body: jsonEncode(payload),
       );
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        print("✅ Backend accepted event → ${response.body}");
+      // Accepted by backend
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        print("✅ Backend response → ${res.body}");
         return true;
       }
 
-      print("⚠️ Server ${response.statusCode}: ${response.body}");
+      // If backend says INVALID DATA → skip retry permanently
+      if (res.statusCode == 400 || res.statusCode == 422) {
+        print("⚠️ Invalid event → marking as synced to avoid infinite retry");
+        return true;
+      }
+
+      print("⚠️ Server error ${res.statusCode}: ${res.body}");
       return false;
     } catch (e) {
-      print("🚨 Upload error: $e");
+      print("🚨 Upload exception: $e");
       return false;
     }
   }
