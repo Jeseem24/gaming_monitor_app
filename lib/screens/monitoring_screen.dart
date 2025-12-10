@@ -4,17 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'child_id_screen.dart';
 
 import '../services/sync_service.dart';
 import '../services/native_event_handler.dart';
 import '../database.dart';
 import 'pin_verify_screen.dart';
 import 'installed_games_screen.dart';
-import '../services/twin_service.dart';
-
-bool _busyMonitor = false; // start/stop monitoring
-bool _busyReport = false; // backend report loading
+import 'child_id_screen.dart';
+import 'child_selection_screen.dart';
 
 const MethodChannel _serviceChannel = MethodChannel('game_detection');
 
@@ -26,13 +23,8 @@ class MonitoringScreen extends StatefulWidget {
 }
 
 class _MonitoringScreenState extends State<MonitoringScreen> {
-  int _backendToday = 0;
-  int _backendWeekly = 0;
-  int _backendNight = 0;
-  int _backendSessions = 0;
-  String _backendState = "Unknown";
-
   bool _serviceRunning = false;
+  bool _busyMonitor = false;
   int _todayMinutes = 0;
 
   final Color _primary = const Color(0xFF3D77FF);
@@ -41,27 +33,56 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   void initState() {
     super.initState();
     _requestNotificationPermission();
-    _loadServiceState();
-    _refreshSummary();
-    _loadTwinReport(); // auto-load backend on start
+    _checkChildSelected();
+    _autoRefreshLoop();
   }
 
-  Future<void> _loadServiceState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getBool('service_running') ?? false;
-    setState(() => _serviceRunning = stored);
-
-    if (_serviceRunning) {
-      await NativeEventHandler.instance.start();
-      SyncService.instance.startSyncLoop();
+  // AUTO REFRESH EVERY 10 SECONDS
+  Future<void> _autoRefreshLoop() async {
+    while (mounted) {
+      await _refreshLocalSummary();
+      await Future.delayed(const Duration(seconds: 10));
     }
   }
 
-  Future<void> _saveServiceState(bool running) async {
+  // CHILD CHECK
+  Future<void> _checkChildSelected() async {
     final prefs = await SharedPreferences.getInstance();
-    prefs.setBool('service_running', running);
+    final id = prefs.getString("selected_child_id");
+
+    if (id == null || id.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showNoChildSelectedDialog();
+      });
+    } else {
+      await _loadServiceState();
+      await _refreshLocalSummary();
+    }
   }
 
+  void _showNoChildSelectedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text("No Child Selected"),
+        content: const Text("Please select a child profile before monitoring."),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
+              );
+            },
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // NOTIFICATIONS
   Future<void> _requestNotificationPermission() async {
     final status = await Permission.notification.status;
     if (!status.isGranted) {
@@ -69,10 +90,26 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     }
   }
 
-  // -------------------------------------------------------------
-  // START SERVICE
-  // -------------------------------------------------------------
-  Future<void> _startService() async {
+  // LOAD SERVICE STATE
+  Future<void> _loadServiceState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final running = prefs.getBool('service_running') ?? false;
+
+    setState(() => _serviceRunning = running);
+
+    if (running) {
+      await NativeEventHandler.instance.start();
+      SyncService.instance.startSyncLoop();
+    }
+  }
+
+  Future<void> _saveServiceState(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('service_running', value);
+  }
+
+  // START MONITORING
+  Future<void> _startMonitoring() async {
     if (_busyMonitor) return;
     setState(() => _busyMonitor = true);
 
@@ -80,26 +117,24 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       await NativeEventHandler.instance.start();
       await _serviceChannel.invokeMethod('start_service');
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Background service started')),
-      );
+      SyncService.instance.startSyncLoop();
+      await _saveServiceState(true);
 
       setState(() => _serviceRunning = true);
-      await _saveServiceState(true);
-      SyncService.instance.startSyncLoop();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Monitoring started")));
     } catch (e) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Failed to start: $e')));
-    } finally {
-      setState(() => _busyMonitor = false);
+      ).showSnackBar(SnackBar(content: Text("Failed: $e")));
     }
+
+    setState(() => _busyMonitor = false);
   }
 
-  // -------------------------------------------------------------
-  // STOP SERVICE
-  // -------------------------------------------------------------
-  Future<void> _stopService() async {
+  // STOP MONITORING
+  Future<void> _stopMonitoring() async {
     if (_busyMonitor) return;
     setState(() => _busyMonitor = true);
 
@@ -113,30 +148,27 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       return;
     }
 
-    SyncService.instance.stopSyncLoop();
-    setState(() => _serviceRunning = false);
-    await _saveServiceState(false);
-
     try {
+      SyncService.instance.stopSyncLoop();
       await _serviceChannel.invokeMethod('stop_service');
-      await Future.delayed(const Duration(milliseconds: 300));
-    } catch (_) {}
+      await _saveServiceState(false);
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Monitoring stopped')));
+      setState(() => _serviceRunning = false);
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Monitoring stopped")));
+    } catch (_) {}
 
     setState(() => _busyMonitor = false);
   }
 
-  Future<void> _toggleService() async {
-    _serviceRunning ? await _stopService() : await _startService();
+  Future<void> _toggleMonitoring() async {
+    _serviceRunning ? await _stopMonitoring() : await _startMonitoring();
   }
 
-  // -------------------------------------------------------------
-  // REFRESH SUMMARY
-  // -------------------------------------------------------------
-  Future<void> _refreshSummary() async {
+  // LOCAL SUMMARY
+  Future<void> _refreshLocalSummary() async {
     try {
       final db = await GameDatabase.instance.database;
       final now = DateTime.now();
@@ -151,109 +183,69 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         [startOfDay],
       );
 
-      final totalSec = (res.first['total'] as int?) ?? 0;
-      setState(() => _todayMinutes = totalSec ~/ 60);
+      final sec = (res.first['total'] as int?) ?? 0;
+      setState(() => _todayMinutes = sec ~/ 60);
     } catch (_) {}
   }
 
-  // -------------------------------------------------------------
-  // REFRESH BACKEND REPORT (separate loading)
-  // -------------------------------------------------------------
-  Future<void> _loadTwinReport() async {
-    setState(() => _busyReport = true);
-
-    try {
-      final userId = await SyncService.instance.getChildId();
-
-      final report = await TwinService.getReport(userId);
-      final twin = await TwinService.getTwin(userId);
-
-      if (report == null || twin == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              "No backend data yet — monitoring will upload activity automatically",
-            ),
-          ),
-        );
-        return;
-      }
-
-      setState(() {
-        _backendToday = report["today_minutes"] ?? 0;
-        _backendWeekly = report["weekly_minutes"] ?? 0;
-        _backendNight = report["night_minutes"] ?? 0;
-        _backendSessions = report["sessions_per_day"] ?? 0;
-        _backendState = twin["state"] ?? "Unknown";
-      });
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Report updated")));
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error loading: $e")));
-    } finally {
-      setState(() => _busyReport = false);
-    }
-  }
-
-  // -------------------------------------------------------------
-  // BUILD UI WIDGETS
-  // -------------------------------------------------------------
+  // MODERN SUMMARY CARD
   Widget _summaryCard() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            spreadRadius: 1,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Container(
-            width: 54,
-            height: 54,
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: _primary.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(12),
+              shape: BoxShape.circle,
             ),
-            child: Icon(Icons.schedule, color: _primary),
+            child: const Icon(Icons.bar_chart, size: 30, color: Colors.blue),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "Today's total usage",
-                  style: TextStyle(fontSize: 13, color: Colors.black54),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '$_todayMinutes min',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: (_serviceRunning ? Colors.green : Colors.grey).withOpacity(
-                0.12,
+          const SizedBox(width: 14),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Today's usage",
+                style: TextStyle(fontSize: 14, color: Colors.black54),
               ),
-              borderRadius: BorderRadius.circular(999),
+              const SizedBox(height: 6),
+              Text(
+                "$_todayMinutes min",
+                style: const TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            decoration: BoxDecoration(
+              color: (_serviceRunning ? Colors.green : Colors.red).withOpacity(
+                0.15,
+              ),
+              borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
               _serviceRunning ? "ACTIVE" : "INACTIVE",
               style: TextStyle(
-                color: _serviceRunning ? Colors.green : Colors.grey,
-                fontWeight: FontWeight.w700,
+                color: _serviceRunning ? Colors.green : Colors.red,
+                fontWeight: FontWeight.bold,
               ),
             ),
           ),
@@ -262,188 +254,140 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     );
   }
 
-  Widget _buildPillButton() {
-    final label = _serviceRunning ? 'STOP MONITORING' : 'START MONITORING';
-    final background = _serviceRunning ? Colors.red : _primary;
+  // BIG MODERN RING BUTTON
+  Widget _bigCircleButton() {
+    final running = _serviceRunning;
 
-    return SizedBox(
-      height: 48,
-      child: ElevatedButton(
-        onPressed: _busyMonitor ? null : _toggleService,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: background,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(999),
+    return GestureDetector(
+      onTap: _busyMonitor ? null : _toggleMonitoring,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        width: 200,
+        height: 200,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            colors: running
+                ? [Colors.red.shade400, Colors.red.shade700]
+                : [_primary.withOpacity(0.8), _primary],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: (running ? Colors.red : _primary).withOpacity(0.45),
+              blurRadius: 36,
+              spreadRadius: 4,
+            ),
+          ],
         ),
-        child: _busyMonitor
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
+        child: Center(
+          child: _busyMonitor
+              ? const CircularProgressIndicator(
                   color: Colors.white,
+                  strokeWidth: 3,
+                )
+              : Text(
+                  running ? "STOP" : "START",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              )
-            : Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-      ),
-    );
-  }
-
-  Widget _installedAppsButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        icon: const Icon(Icons.apps),
-        label: const Text("VIEW INSTALLED APPS"),
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const InstalledGamesScreen()),
-          );
-        },
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          side: BorderSide(color: _primary, width: 1.6),
         ),
       ),
     );
   }
 
-  Widget _childIdButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        icon: const Icon(Icons.qr_code),
-        label: const Text("SHOW CHILD DEVICE ID"),
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const ChildIdScreen()),
-          );
-        },
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          side: BorderSide(color: Colors.black54, width: 1.4),
-        ),
-      ),
+  // ❗ MODERN OUTLINED BUTTON STYLE (BIGGER)
+  ButtonStyle _modernButtonStyle() {
+    return OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      side: BorderSide(color: _primary, width: 2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      foregroundColor: _primary,
+      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
     );
   }
 
-  // -------------------------------------------------------------
-  // MAIN BUILD
-  // -------------------------------------------------------------
+  // MAIN UI
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text(
-          'Digital Twin Monitor',
+          "Digital Twin Monitor",
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
         ),
         backgroundColor: _primary,
-        iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          IconButton(
-            onPressed: () async {
-              await _refreshSummary();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Summary refreshed')),
-              );
-            },
-            icon: const Icon(Icons.refresh, color: Colors.white),
-          ),
-        ],
       ),
 
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 26),
-          child: SingleChildScrollView(
-            child: Column(
-              children: [
-                const Text(
-                  'Monitoring is ready. Use the button below to start background tracking.',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-
-                _summaryCard(),
-                const SizedBox(height: 22),
-
-                _buildPillButton(),
-                const SizedBox(height: 20),
-
-                _installedAppsButton(),
-                const SizedBox(height: 12),
-
-                _childIdButton(),
-                const SizedBox(height: 20),
-
-                // BACKEND REPORT CARD
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.deepPurple.withOpacity(0.05),
-                    borderRadius: BorderRadius.circular(12),
+        child: SingleChildScrollView(
+          // FIXED YELLOW OVERFLOW
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(22),
+              child: Column(
+                children: [
+                  const Text(
+                    "Tap the button below to start or stop\nbackground monitoring.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 15),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        "Backend Report",
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 10),
-                      Text("Today: $_backendToday min"),
-                      Text("Weekly: $_backendWeekly min"),
-                      Text("Night: $_backendNight min"),
-                      Text("Sessions/Day: $_backendSessions"),
-                      Text("State: $_backendState"),
-                    ],
-                  ),
-                ),
 
-                const SizedBox(height: 20),
+                  const SizedBox(height: 28),
 
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _busyReport ? null : _loadTwinReport,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurple,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: _busyReport
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text(
-                            "REFRESH BACKEND REPORT",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
+                  _summaryCard(),
+                  const SizedBox(height: 40),
+
+                  _bigCircleButton(),
+                  const SizedBox(height: 40),
+
+                  // BIG MODERN BUTTON 1
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: OutlinedButton.icon(
+                      style: _modernButtonStyle(),
+                      icon: const Icon(Icons.apps, size: 22),
+                      label: const Text("VIEW INSTALLED APPS"),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const InstalledGamesScreen(),
                           ),
+                        );
+                      },
+                    ),
                   ),
-                ),
 
-                const SizedBox(height: 30),
+                  const SizedBox(height: 14),
 
-                const Text(
-                  'Background detection will continue even when the app is closed.',
-                  textAlign: TextAlign.center,
-                ),
-              ],
+                  // BIG MODERN BUTTON 2
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: OutlinedButton.icon(
+                      style: _modernButtonStyle(),
+                      icon: const Icon(Icons.qr_code, size: 22),
+                      label: const Text("SHOW CHILD PROFILE"),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const ChildIdScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 40),
+                ],
+              ),
             ),
           ),
         ),
