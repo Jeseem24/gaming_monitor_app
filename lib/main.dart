@@ -1,13 +1,16 @@
 // lib/main.dart
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-// FIXED: All imports converted to safe relative imports
+// Screens
 import 'screens/installed_games_screen.dart';
 import 'screens/consent_screen.dart';
 import 'screens/notification_gate_screen.dart';
 import 'screens/pin_create_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/child_selection_screen.dart';
 import 'screens/monitoring_screen.dart';
 
 void main() async {
@@ -20,20 +23,58 @@ class GamingMonitorApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const primaryBlue = Color(0xFF3D77FF);
+
     return MaterialApp(
       title: 'Gaming Monitor',
       debugShowCheckedModeBanner: false,
+
+      // ============================================================
+      //                      GLOBAL THEME
+      // ============================================================
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3D77FF)),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: primaryBlue,
+          primary: primaryBlue,
+          secondary: primaryBlue,
+        ),
+
         scaffoldBackgroundColor: Colors.white,
+
+        appBarTheme: const AppBarTheme(
+          backgroundColor: primaryBlue,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+
         elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(foregroundColor: Colors.white),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: primaryBlue,
+            foregroundColor: Colors.white,
+            textStyle: const TextStyle(fontWeight: FontWeight.w600),
+            padding: const EdgeInsets.symmetric(vertical: 14),
+          ),
+        ),
+
+        inputDecorationTheme: const InputDecorationTheme(
+          border: OutlineInputBorder(),
+          focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: primaryBlue, width: 2),
+          ),
+          labelStyle: TextStyle(color: Colors.black87),
         ),
       ),
+
+      // Router
       home: const RootRouter(),
 
-      // FIXED: route defined without package import
-      routes: {'/installed_games': (_) => const InstalledGamesScreen()},
+      // ⭐⭐⭐ ALL REQUIRED ROUTES ADDED HERE ⭐⭐⭐
+      routes: {
+        '/login': (_) => const LoginScreen(),
+        '/child-selection': (_) => const ChildSelectionScreen(),
+        '/monitoring': (_) => const MonitoringScreen(),
+        '/installed_games': (_) => const InstalledGamesScreen(),
+      },
     );
   }
 }
@@ -47,9 +88,13 @@ class RootRouter extends StatefulWidget {
 
 class _RootRouterState extends State<RootRouter> {
   bool _loading = true;
+
   bool _consentDone = false;
   bool _notifDone = false;
   bool _pinSet = false;
+
+  bool _loginDone = false;
+  bool _childSelected = false;
 
   @override
   void initState() {
@@ -60,20 +105,30 @@ class _RootRouterState extends State<RootRouter> {
   Future<void> _bootstrap() async {
     final prefs = await SharedPreferences.getInstance();
 
+    // Read states
     _consentDone = prefs.getBool('consent_done') ?? false;
     _notifDone = prefs.getBool('notif_done') ?? false;
     _pinSet = prefs.getBool('pin_set') ?? false;
 
+    // Login check
+    final parentId = prefs.getString("parent_id");
+    _loginDone = parentId != null && parentId.isNotEmpty;
+
+    // Selected child check
+    final childId = prefs.getString("selected_child_id");
+    _childSelected = childId != null && childId.isNotEmpty;
+
+    // Notification permission logic
     if (!_notifDone) {
       final status = await Permission.notification.status;
       if (!status.isGranted) {
         final result = await Permission.notification.request();
         if (result.isGranted) {
-          await prefs.setBool('notif_done', true);
+          await prefs.setBool("notif_done", true);
           _notifDone = true;
         }
       } else {
-        await prefs.setBool('notif_done', true);
+        await prefs.setBool("notif_done", true);
         _notifDone = true;
       }
     }
@@ -87,9 +142,13 @@ class _RootRouterState extends State<RootRouter> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    // App step-by-step flow
     if (!_consentDone) return const ConsentScreen();
     if (!_notifDone) return const NotificationGateScreen();
     if (!_pinSet) return const PinCreateScreen();
+
+    if (!_loginDone) return const LoginScreen();
+    if (!_childSelected) return const ChildSelectionScreen();
 
     return const MonitoringScreen();
   }
