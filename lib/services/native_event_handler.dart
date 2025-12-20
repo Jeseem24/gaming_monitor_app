@@ -2,20 +2,22 @@
 
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../database.dart';
 
 class NativeEventHandler {
   NativeEventHandler._private();
   static final NativeEventHandler instance = NativeEventHandler._private();
 
-  final MethodChannel _channel = const MethodChannel('game_events');
+  // ✅ FIXED CHANNEL NAME
+  final MethodChannel _channel = const MethodChannel('game_detection');
+
   bool _started = false;
 
   Future<void> start() async {
     if (_started) return;
     _channel.setMethodCallHandler(_handleCall);
     _started = true;
+    print("🎧 NativeEventHandler listening on game_detection");
   }
 
   Future<String?> _getActiveChildId() async {
@@ -26,7 +28,6 @@ class NativeEventHandler {
       print("⚠️ No child selected — dropping event");
       return null;
     }
-
     return id;
   }
 
@@ -40,40 +41,31 @@ class NativeEventHandler {
       }
 
       final raw = call.arguments;
-      Map data = {};
-
-      if (raw is Map) {
-        data = Map<String, dynamic>.from(raw);
-      }
+      final data = (raw is Map) ? Map<String, dynamic>.from(raw) : {};
 
       final packageName = data['package_name']?.toString() ?? 'unknown';
       final gameName = data['game_name']?.toString() ?? packageName;
 
       final startTime = (data['start_time'] is num)
           ? (data['start_time'] as num).toInt()
-          : int.tryParse(data['start_time']?.toString() ?? '') ?? 0;
+          : 0;
 
       final endTime = (data['end_time'] is num)
           ? (data['end_time'] as num).toInt()
-          : int.tryParse(data['end_time']?.toString() ?? '') ?? 0;
+          : 0;
 
       final duration = (data['duration'] is num)
           ? (data['duration'] as num).toInt()
-          : int.tryParse(data['duration']?.toString() ?? '') ?? 0;
+          : 0;
 
       int now = DateTime.now().millisecondsSinceEpoch;
-
       int timestamp = (data['timestamp'] is num)
           ? (data['timestamp'] as num).toInt()
           : (endTime != 0 ? endTime : now);
 
-      // 🔥 FIX: Prevent future timestamps
-      if (timestamp > now) {
-        print("⚠️ Timestamp from service is in the future. Fixing it.");
-        timestamp = now;
-      }
+      if (timestamp > now) timestamp = now;
 
-      final event = <String, dynamic>{
+      final event = {
         'user_id': childId,
         'package_name': packageName,
         'game_name': gameName,
@@ -86,12 +78,12 @@ class NativeEventHandler {
       };
 
       await GameDatabase.instance.insertEvent(event);
-      print("📥 Event stored locally for child: $childId");
+      print("📥 Event inserted → $gameName ($duration sec)");
 
       return {'status': 'ok'};
     } catch (e) {
-      print('NativeEventHandler error: $e');
-      return {'status': 'error', 'message': e.toString()};
+      print("❌ NativeEventHandler error: $e");
+      return {'status': 'error'};
     }
   }
 }
