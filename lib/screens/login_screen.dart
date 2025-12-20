@@ -46,88 +46,58 @@ class _LoginScreenState extends State<LoginScreen> {
       final prefs = await SharedPreferences.getInstance();
 
       // ------------------------------------------------------------
-      //                MOCK ACCOUNTS FOR TESTING
-      // ------------------------------------------------------------
-      if (email == "zero@test.com" && pass == "1111") {
-        await prefs.setString("parent_email", email);
-        await prefs.setString("parent_id", "mock_parent_zero");
-        await prefs.setString("auth_token", "mock_token_zero");
-        await prefs.setString("child_list", jsonEncode([]));
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
-        );
-        return;
-      }
-
-      if (email == "one@test.com" && pass == "3333") {
-        final fakeChildren = [
-          {"child_id": "child_100", "name": "Single Child"},
-        ];
-        await prefs.setString("parent_email", email);
-        await prefs.setString("parent_id", "mock_parent_one");
-        await prefs.setString("auth_token", "mock_token_one");
-        await prefs.setString("child_list", jsonEncode(fakeChildren));
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
-        );
-        return;
-      }
-
-      if (email == "two@test.com" && pass == "2222") {
-        final fakeChildren = [
-          {"child_id": "child_001", "name": "Child One"},
-          {"child_id": "child_002", "name": "Child Two"},
-        ];
-        await prefs.setString("parent_email", email);
-        await prefs.setString("parent_id", "mock_parent_two");
-        await prefs.setString("auth_token", "mock_token_two");
-        await prefs.setString("child_list", jsonEncode(fakeChildren));
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
-        );
-        return;
-      }
-
-      // ------------------------------------------------------------
       //                   REAL BACKEND LOGIN
       // ------------------------------------------------------------
       final response = await http.post(
         Uri.parse("$baseUrl/parent/login"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"email": email, "password": pass}),
+        body: jsonEncode({
+          "email": email,
+          "password": pass,
+        }),
       );
 
       if (response.statusCode != 200) {
         _toast("Invalid login. Check credentials.");
-        setState(() => _busy = false);
         return;
       }
 
       final data = jsonDecode(response.body);
+
       if (data["success"] != true) {
         _toast("Login failed");
-        setState(() => _busy = false);
         return;
       }
 
-      final parentId = data["parent_id"];
-      final children = (data["children"] is List) ? data["children"] : [];
+      // ---------------- NORMALIZE DATA ----------------
+      final parentId = data["parent_id"].toString();
 
+      final rawChildren =
+          (data["children"] is List) ? data["children"] : [];
+
+      final children = rawChildren.map<Map<String, String>>((c) {
+        return {
+          "child_id": c["child_id"].toString(),
+          "name": c["name"]?.toString() ?? "Child",
+        };
+      }).toList();
+
+      // ---------------- SAVE LOCALLY ----------------
       await prefs.setString("parent_email", email);
       await prefs.setString("parent_id", parentId);
-      await prefs.setString("auth_token", data["token"] ?? "local_token");
+      await prefs.setString(
+        "auth_token",
+        data["token"]?.toString() ?? "local_token",
+      );
       await prefs.setString("child_list", jsonEncode(children));
 
       if (!mounted) return;
+
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
+        MaterialPageRoute(
+          builder: (_) => const ChildSelectionScreen(),
+        ),
       );
     } catch (e) {
       _toast("Error logging in: $e");
@@ -137,7 +107,8 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _toast(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(msg)));
   }
 
   // ============================================================
@@ -153,23 +124,15 @@ class _LoginScreenState extends State<LoginScreen> {
         child: Center(
           child: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(
-              26,
-              10,
-              26,
-              20,
-            ), // 🔼 Shift upward
+            padding: const EdgeInsets.fromLTRB(26, 10, 26, 20),
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 minHeight: MediaQuery.of(context).size.height * 0.75,
               ),
               child: Column(
-                mainAxisAlignment:
-                    MainAxisAlignment.start, // 🔼 Moves content up
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // ------------------ TITLE ------------------
-                  const SizedBox(height: 5), // 🔽 Tighter top spacing
+                  const SizedBox(height: 5),
 
                   const Text(
                     "Login to Continue",
@@ -179,6 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: primaryBlue,
                     ),
                   ),
+
                   const SizedBox(height: 8),
 
                   const Text(
@@ -187,14 +151,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: TextStyle(fontSize: 14, color: Colors.black54),
                   ),
 
-                  const SizedBox(height: 24), // tighter spacing
-                  // ------------------ CARD ------------------
+                  const SizedBox(height: 24),
+
                   Container(
                     padding: const EdgeInsets.all(22),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
+                      boxShadow: const [
                         BoxShadow(
                           color: Colors.black12,
                           blurRadius: 16,
@@ -228,7 +192,9 @@ class _LoginScreenState extends State<LoginScreen> {
                                     : Icons.visibility_off,
                               ),
                               onPressed: () {
-                                setState(() => _showPassword = !_showPassword);
+                                setState(
+                                  () => _showPassword = !_showPassword,
+                                );
                               },
                             ),
                           ),
@@ -263,7 +229,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
 
-                  const SizedBox(height: 10), // bottom spacing reduced
+                  const SizedBox(height: 10),
                 ],
               ),
             ),
