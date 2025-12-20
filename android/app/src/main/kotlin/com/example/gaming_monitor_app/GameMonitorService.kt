@@ -36,6 +36,16 @@ class GameMonitorService : Service() {
         startDetectionLoop()
     }
 
+    private fun resolveAppName(pkg: String): String {
+    return try {
+        val info = packageManager.getApplicationInfo(pkg, 0)
+        packageManager.getApplicationLabel(info).toString()
+    } catch (e: Exception) {
+        pkg // fallback
+    }
+}
+
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         log("SERVICE STARTED")
         return START_STICKY
@@ -151,10 +161,27 @@ class GameMonitorService : Service() {
                     val isGame = isGameApp(lastPackage!!)
 
                     if (isGame) {
-                        insertEventToDatabase(lastPackage!!, lastStartTime, nowTs, duration)
-                        sendEventToFlutter(lastPackage!!, lastStartTime, nowTs, duration)
-                        log("GAME CLOSED → ${lastPackage} | ${duration}s")
-                    }
+    val appName = resolveAppName(lastPackage!!)
+
+    insertEventToDatabase(
+        lastPackage!!,
+        appName,
+        lastStartTime,
+        nowTs,
+        duration
+    )
+
+    sendEventToFlutter(
+        lastPackage!!,
+        appName,
+        lastStartTime,
+        nowTs,
+        duration
+    )
+
+    log("GAME CLOSED → $appName ($lastPackage) | ${duration}s")
+}
+
                 }
 
                 lastPackage = currentPackage
@@ -167,7 +194,14 @@ class GameMonitorService : Service() {
         }
     }
 
-    private fun insertEventToDatabase(pkg: String, start: Long, end: Long, duration: Long) {
+    private fun insertEventToDatabase(
+    pkg: String,
+    gameName: String,
+    start: Long,
+    end: Long,
+    duration: Long
+)
+ {
         try {
             val db = openOrCreateDatabase("gaming_monitor.db", MODE_PRIVATE, null)
 
@@ -187,28 +221,36 @@ class GameMonitorService : Service() {
             """)
 
             db.execSQL("""
-                INSERT INTO game_events (
-                    user_id, package_name, start_time, end_time, duration, timestamp
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            """, arrayOf(
-                "demo_user_1",
-                pkg,
-                start.toString(),
-                end.toString(),
-                duration,
-                end.toString()
-            ))
+    INSERT INTO game_events (
+        user_id, package_name, game_name, start_time, end_time, duration, timestamp
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+""", arrayOf(
+    "demo_user_1",
+    pkg,
+    gameName,
+    start.toString(),
+    end.toString(),
+    duration,
+    end.toString()
+))
 
-            log("DB EVENT SAVED → $pkg | ${duration}s")
+
+log("DB EVENT SAVED → $gameName ($pkg) | ${duration}s")
 
         } catch (e: Exception) {
             log("DB INSERT ERROR: ${e.message}")
         }
     }
 
-    private fun sendEventToFlutter(pkg: String, start: Long, end: Long, duration: Long) {
+    private fun sendEventToFlutter(
+    pkg: String,
+    gameName: String,
+    start: Long,
+    end: Long,
+    duration: Long
+) {
         try {
-            val engine = FlutterEngineCache.getInstance()["my_engine"]
+            val engine = FlutterEngineCache.getInstance()["preloaded_engine"]
             if (engine == null) {
                 log("Flutter engine missing → event saved but not forwarded")
                 return
@@ -219,12 +261,14 @@ class GameMonitorService : Service() {
                     .invokeMethod(
                         "log_event",
                         mapOf(
-                            "package_name" to pkg,
-                            "start_time" to start,
-                            "end_time" to end,
-                            "duration" to duration,
-                            "timestamp" to end
-                        )
+    "package_name" to pkg,
+    "game_name" to gameName,
+    "start_time" to start,
+    "end_time" to end,
+    "duration" to duration,
+    "timestamp" to end
+)
+
                     )
             }
 
