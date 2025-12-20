@@ -105,56 +105,97 @@ class SyncService {
   // --------------------------------------------------------------
   //  UPLOAD 1 EVENT
   // --------------------------------------------------------------
-  Future<bool> _uploadSingleEvent(
-    Map<String, dynamic> event,
-    String childId,
-  ) async {
-    try {
-      final url = '$_baseUrl/events';
+Future<bool> _uploadSingleEvent(
+  Map<String, dynamic> event,
+  String childId,
+) async {
+  try {
+    final url = '$_baseUrl/events';
 
-      // Duration correction (detect ms vs sec)
-      int raw = (event['duration'] is num) ? event['duration'] as int : 0;
+    // ----------------------------
+    // Duration: seconds → minutes
+    // ----------------------------
+    int durationSeconds =
+        (event['duration'] is num) ? event['duration'] as int : 0;
 
-      // If value looks like milliseconds, convert to seconds
-      if (raw > 30000) raw ~/= 1000;
-
-      int minutes = (raw / 60).ceil();
-      if (minutes < 1) minutes = 1;
-
-      final gameName =
-          event['game_name']?.toString() ?? event['package_name']?.toString();
-
-      final payload = {
-        "user_id": childId,
-        "game_name": gameName,
-        "duration": minutes,
-      };
-
-      print("🌐 Uploading event → ${jsonEncode(payload)}");
-
-      final res = await http.post(
-        Uri.parse(url),
-        headers: _defaultHeaders,
-        body: jsonEncode(payload),
-      );
-
-      // Accepted by backend
-      if (res.statusCode == 200 || res.statusCode == 201) {
-        print("✅ Backend response → ${res.body}");
-        return true;
-      }
-
-      // If backend says INVALID DATA → skip retry permanently
-      if (res.statusCode == 400 || res.statusCode == 422) {
-        print("⚠️ Invalid event → marking as synced to avoid infinite retry");
-        return true;
-      }
-
-      print("⚠️ Server error ${res.statusCode}: ${res.body}");
-      return false;
-    } catch (e) {
-      print("🚨 Upload exception: $e");
-      return false;
+    // If milliseconds slipped in, convert
+    if (durationSeconds > 30000) {
+      durationSeconds ~/= 1000;
     }
+
+    if (durationSeconds <= 0) {
+      print("❌ Invalid duration → skip event");
+      return true;
+    }
+
+    int durationMinutes = (durationSeconds / 60).ceil();
+    if (durationMinutes < 1) durationMinutes = 1;
+
+    // ----------------------------
+    // Required fields
+    // ----------------------------
+    final packageName = event['package_name']?.toString();
+    final gameName =
+        event['game_name']?.toString() ?? packageName ?? "Unknown";
+
+    if (packageName == null) {
+      print("❌ Missing package_name → skip event");
+      return true;
+    }
+
+    // ----------------------------
+    // Time fields → MUST be epoch ms (INT)
+    // ----------------------------
+    int parseMs(dynamic v) {
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return DateTime.now().millisecondsSinceEpoch;
+    }
+
+    final startTime = parseMs(event['start_time']);
+    final endTime = parseMs(event['end_time']);
+    final timestamp = parseMs(event['timestamp'] ?? event['end_time']);
+
+    // ----------------------------
+    // FINAL PAYLOAD (MATCHES POSTMAN ✔)
+    // ----------------------------
+    final payload = {
+      "user_id": childId,
+      "childdeviceid": "android_$childId",
+      "package_name": packageName,
+      "game_name": gameName,
+      "duration": durationMinutes, // ✅ MINUTES
+      "start_time": startTime,      // ✅ INT
+      "end_time": endTime,          // ✅ INT
+      "timestamp": timestamp,       // ✅ INT
+    };
+
+    print("🌐 Uploading event → ${jsonEncode(payload)}");
+
+    final res = await http.post(
+      Uri.parse(url),
+      headers: _defaultHeaders,
+      body: jsonEncode(payload),
+    );
+
+    if (res.statusCode == 200 || res.statusCode == 201) {
+      print("✅ Backend accepted event → ${res.body}");
+      return true;
+    }
+
+    if (res.statusCode == 400 || res.statusCode == 422) {
+      print("⚠️ Invalid payload → skipping event permanently");
+      return true;
+    }
+
+    print("⚠️ Server error ${res.statusCode}: ${res.body}");
+    return false;
+  } catch (e) {
+    print("🚨 Upload exception: $e");
+    return false;
   }
+}
+
+
+
 }
