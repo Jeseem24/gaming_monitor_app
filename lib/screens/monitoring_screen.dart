@@ -179,9 +179,14 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
       ).millisecondsSinceEpoch;
 
       final res = await db.rawQuery(
-        'SELECT SUM(duration) as total FROM game_events WHERE timestamp >= ?',
-        [startOfDay],
-      );
+  '''
+  SELECT SUM(duration) as total 
+  FROM game_events 
+  WHERE CAST(timestamp AS INTEGER) >= ?
+  ''',
+  [startOfDay],
+);
+
 
       final sec = (res.first['total'] as int?) ?? 0;
       setState(() => _todayMinutes = sec ~/ 60);
