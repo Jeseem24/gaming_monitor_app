@@ -1,11 +1,9 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
-// Screens
-import 'screens/consent_screen.dart';
-import 'screens/notification_gate_screen.dart';
-import 'screens/pin_create_screen.dart';
+import 'screens/monitoring_gate.dart';
 import 'screens/login_screen.dart';
 import 'screens/child_selection_screen.dart';
 import 'screens/monitoring_screen.dart';
@@ -14,8 +12,20 @@ import 'screens/installed_games_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.clear(); // 🔥 HARD RESET
+  // 🎨 Status bar style
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+    ),
+  );
+http.get(Uri.parse('https://gaming-twin-backend.onrender.com/health'))
+      .then((_) => debugPrint("🚀 Server pinged successfully"))
+      .catchError((e) {
+        debugPrint("⚠️ Server ping failed (expected if cold): $e");
+        return http.Response('Error', 500); // Return dummy response
+      });
+
   runApp(const GamingMonitorApp());
 }
 
@@ -25,75 +35,29 @@ class GamingMonitorApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-  debugShowCheckedModeBanner: false,
-
-  home: const RootRouter(),
-
-  // 🚫 disable Android route restoration
-  restorationScopeId: null,
-
-  routes: {
-    '/login': (_) => const LoginScreen(),
-    '/child-selection': (_) => const ChildSelectionScreen(),
-    '/monitoring': (_) => const MonitoringScreen(),
-    '/installed_games': (_) => const InstalledGamesScreen(),
-  },
-);
-
-  }
-}
-
-class RootRouter extends StatefulWidget {
-  const RootRouter({super.key});
-
-  @override
-  State<RootRouter> createState() => _RootRouterState();
-}
-
-class _RootRouterState extends State<RootRouter> {
-  bool _loading = true;
-
-  bool _consentDone = false;
-  bool _notifDone = false;
-  bool _pinSet = false;
-  bool _loginDone = false;
-  bool _childSelected = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _bootstrap();
-  }
-
-  Future<void> _bootstrap() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    _consentDone = prefs.getBool('consent_done') ?? false;
-    _notifDone = prefs.getBool('notif_done') ?? false;
-    _pinSet = prefs.getBool('pin_set') ?? false;
-
-    _loginDone = (prefs.getString("parent_id") ?? "").isNotEmpty;
-    _childSelected =
-        (prefs.getString("selected_child_id") ?? "").isNotEmpty;
-
-    setState(() => _loading = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    // ✅ FINAL, GUARANTEED FLOW
-    if (!_consentDone) return const ConsentScreen();
-    if (!_notifDone) return const NotificationGateScreen();
-    if (!_pinSet) return const PinCreateScreen();
-    if (!_loginDone) return const LoginScreen();
-    if (!_childSelected) return const ChildSelectionScreen();
-
-    return const MonitoringScreen();
+      debugShowCheckedModeBanner: false,
+      title: 'Digital Twin Monitor',
+      
+      // 🔒 LOCK UI STYLE
+      theme: ThemeData(
+        useMaterial3: false,
+        primaryColor: const Color(0xFF3D77FF),
+        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
+        colorScheme: ColorScheme.fromSwatch().copyWith(
+          primary: const Color(0xFF3D77FF),
+          secondary: const Color(0xFF3D77FF),
+          error: const Color(0xFFE74C3C),
+        ),
+      ),
+      
+      initialRoute: '/',
+      routes: {
+        '/': (_) => const MonitoringGate(),
+        '/login': (_) => const LoginScreen(),
+        '/child-selection': (_) => const ChildSelectionScreen(),
+        '/monitoring': (_) => const MonitoringScreen(),
+        '/installed_games': (_) => const InstalledGamesScreen(),
+      },
+    );
   }
 }
