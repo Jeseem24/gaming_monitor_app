@@ -20,15 +20,19 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
 
   static const _pinSessionMs = 5 * 60 * 1000; // 5 minutes
 
+  // 🎨 Consistent theme colors
+  static const Color _primary = Color(0xFF3D77FF);
+  static const Color _success = Color(0xFF2ECC71);
+  static const Color _textDark = Color(0xFF2D3436);
+  static const Color _textLight = Color(0xFF636E72);
+  static const Color _background = Color(0xFFF8F9FA);
+
   @override
   void initState() {
     super.initState();
     _loadApps();
   }
 
-  // --------------------------
-  // UTF-16 safe sanitizer
-  // --------------------------
   String _sanitize(String? text) {
     if (text == null) return '';
     try {
@@ -54,9 +58,6 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
     }
   }
 
-  // --------------------------
-  // PIN Session Checker
-  // --------------------------
   Future<bool> _checkPinSessionOrAuthenticate() async {
     final prefs = await SharedPreferences.getInstance();
     final last = prefs.getInt('override_verified_at') ?? 0;
@@ -76,9 +77,6 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
     return false;
   }
 
-  // --------------------------
-  // Load list ONCE
-  // --------------------------
   Future<void> _loadApps() async {
     setState(() => _loading = true);
 
@@ -92,9 +90,6 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
     });
   }
 
-  // --------------------------
-  // Only update the specific app → FAST
-  // --------------------------
   void _updateLocalOverride(String pkg, String? override) {
     setState(() {
       for (var app in _apps) {
@@ -118,7 +113,18 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Override saved → $pkg → ${value.toUpperCase()}")),
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Text("Marked as ${value.toUpperCase()}"),
+          ],
+        ),
+        backgroundColor: _success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
     );
   }
 
@@ -127,14 +133,22 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
     _updateLocalOverride(pkg, null);
 
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text("Override cleared")));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.refresh_rounded, color: Colors.white, size: 20),
+            SizedBox(width: 10),
+            Text("Override cleared"),
+          ],
+        ),
+        backgroundColor: _primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
-  // --------------------------
-  // Filtering for search + toggle
-  // --------------------------
   List<Map<String, dynamic>> get _visibleApps {
     return _apps.where((a) {
       final label = _sanitize(a['label']);
@@ -149,10 +163,7 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
     }).toList();
   }
 
-  // --------------------------
-  // Single Tile Widget
-  // --------------------------
-  Widget _tile(Map<String, dynamic> app) {
+  void _showAppDetails(Map<String, dynamic> app) {
     final label = _sanitize(app['label']);
     final pkg = _sanitize(app['package']);
     final override = app['override'] as String?;
@@ -160,218 +171,500 @@ class _InstalledGamesScreenState extends State<InstalledGamesScreen> {
     final auto = app['autoIsGame'] == true;
     final Uint8List? icon = app['icon'];
 
-    final showMarkAsApp = isGame;
-    final showMarkAsGame = !isGame;
-
-    return ListTile(
-      leading: SizedBox(
-        width: 48,
-        height: 48,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: icon != null && icon.isNotEmpty
-              ? Image.memory(
-                  icon,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    color: Colors.grey.shade300,
-                    child: Center(
-                      child: Text(
-                        _getSafeInitial(label),
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                )
-              : Container(
-                  color: Colors.grey.shade300,
-                  child: Center(
-                    child: Text(
-                      _getSafeInitial(label),
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-      ),
-
-      title: Row(
-        children: [
-          Expanded(child: Text(label)),
-          if (override != null)
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              margin: const EdgeInsets.only(top: 12),
+              width: 40,
+              height: 4,
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                "OVERRIDE: ${override.toUpperCase()}",
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                ),
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(4),
               ),
             ),
-        ],
-      ),
 
-      subtitle: Text(pkg, style: const TextStyle(fontSize: 12)),
-
-      trailing: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: isGame
-              ? Colors.green.withOpacity(0.15)
-              : Colors.grey.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          isGame ? "GAME" : "APP",
-          style: TextStyle(
-            color: isGame ? Colors.green.shade800 : Colors.grey.shade600,
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-          ),
-        ),
-      ),
-
-      onTap: () {
-        showModalBottomSheet(
-          context: context,
-          builder: (_) => Padding(
-            padding: const EdgeInsets.all(16),
-            child: StatefulBuilder(
-              builder: (_, setSheet) => Column(
-                mainAxisSize: MainAxisSize.min,
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
                 children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(pkg, style: const TextStyle(color: Colors.black54)),
-                  const SizedBox(height: 10),
-                  Text(
-                    auto ? "Auto-detected as GAME." : "Auto-detected as APP.",
-                  ),
-                  if (override != null)
-                    Text("Override: ${override.toUpperCase()}"),
-                  const SizedBox(height: 20),
-
-                  // MARK AS APP
-                  if (showMarkAsApp)
-                    OutlinedButton(
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        if (await _checkPinSessionOrAuthenticate()) {
-                          await _applyOverride(pkg, 'app');
-                        }
-                      },
-                      child: const Text("MARK AS APP (PIN)"),
-                    ),
-
-                  // MARK AS GAME
-                  if (showMarkAsGame)
-                    OutlinedButton(
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        if (await _checkPinSessionOrAuthenticate()) {
-                          await _applyOverride(pkg, 'game');
-                        }
-                      },
-                      child: const Text("MARK AS GAME (PIN)"),
-                    ),
-
-                  // CLEAR OVERRIDE
-                  if (override != null)
-                    TextButton(
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        if (await _checkPinSessionOrAuthenticate()) {
-                          await _clearOverride(pkg);
-                        }
-                      },
-                      child: const Text("CLEAR OVERRIDE (PIN)"),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  // --------------------------
-  // UI BUILD
-  // --------------------------
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          "Installed Apps",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
-        ),
-        backgroundColor: const Color(0xFF3D77FF),
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
+                  // App Icon & Name
+                  Row(
                     children: [
-                      Expanded(
-                        child: TextField(
-                          onChanged: (v) => setState(() => _filter = v),
-                          decoration: const InputDecoration(
-                            hintText: "Search apps or package name",
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: icon != null && icon.isNotEmpty
+                              ? Image.memory(icon, fit: BoxFit.cover)
+                              : Container(
+                                  color: _primary.withAlpha(20),
+                                  child: Center(
+                                    child: Text(
+                                      _getSafeInitial(label),
+                                      style: const TextStyle(
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.bold,
+                                        color: _primary,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                         ),
                       ),
-                      const SizedBox(width: 10),
-                      Column(
-                        children: [
-                          const Text("Only games"),
-                          Switch(
-                            value: _onlyGames,
-                            onChanged: (v) => setState(() => _onlyGames = v),
-                          ),
-                        ],
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              label,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: _textDark,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              pkg,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: _textLight,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: _visibleApps.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (_, i) => _tile(_visibleApps[i]),
+
+                  const SizedBox(height: 20),
+
+                  // Status Info
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _background,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        _detailRow(
+                          "Auto-detected",
+                          auto ? "Game" : "App",
+                          auto ? Icons.games_rounded : Icons.apps_rounded,
+                        ),
+                        if (override != null) ...[
+                          const SizedBox(height: 12),
+                          _detailRow(
+                            "Override",
+                            override.toUpperCase(),
+                            Icons.edit_rounded,
+                            valueColor: _primary,
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        _detailRow(
+                          "Current Status",
+                          isGame ? "GAME" : "APP",
+                          isGame ? Icons.sports_esports_rounded : Icons.phone_android_rounded,
+                          valueColor: isGame ? _success : _textLight,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Text(
-                    "Detected ${_apps.length} apps — showing ${_visibleApps.length}",
-                  ),
-                ),
-              ],
+
+                  const SizedBox(height: 20),
+
+                  // Action Buttons
+                  if (isGame)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.phone_android_rounded, size: 20),
+                        label: const Text("MARK AS APP"),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _primary,
+                          side: BorderSide(color: _primary.withAlpha(100)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          if (await _checkPinSessionOrAuthenticate()) {
+                            await _applyOverride(pkg, 'app');
+                          }
+                        },
+                      ),
+                    ),
+
+                  if (!isGame)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.games_rounded, size: 20),
+                        label: const Text("MARK AS GAME"),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _success,
+                          side: BorderSide(color: _success.withAlpha(100)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          if (await _checkPinSessionOrAuthenticate()) {
+                            await _applyOverride(pkg, 'game');
+                          }
+                        },
+                      ),
+                    ),
+
+                  if (override != null) ...[
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: TextButton.icon(
+                        icon: Icon(Icons.refresh_rounded, size: 20, color: _textLight),
+                        label: Text(
+                          "RESET TO AUTO",
+                          style: TextStyle(color: _textLight),
+                        ),
+                        onPressed: () async {
+                          Navigator.pop(context);
+                          if (await _checkPinSessionOrAuthenticate()) {
+                            await _clearOverride(pkg);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 8),
+                ],
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _detailRow(String label, String value, IconData icon, {Color? valueColor}) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: _textLight),
+        const SizedBox(width: 10),
+        Text(
+          label,
+          style: TextStyle(fontSize: 13, color: _textLight),
+        ),
+        const Spacer(),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: valueColor ?? _textDark,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _appTile(Map<String, dynamic> app) {
+    final label = _sanitize(app['label']);
+    final pkg = _sanitize(app['package']);
+    final override = app['override'] as String?;
+    final isGame = app['isGame'] == true;
+    final Uint8List? icon = app['icon'];
+
+    return GestureDetector(
+      onTap: () => _showAppDetails(app),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+        ),
+        child: Row(
+          children: [
+            // Icon
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                width: 48,
+                height: 48,
+                child: icon != null && icon.isNotEmpty
+                    ? Image.memory(
+                        icon,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _placeholderIcon(label),
+                      )
+                    : _placeholderIcon(label),
+              ),
+            ),
+            const SizedBox(width: 14),
+
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          label,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: _textDark,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (override != null) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: _primary.withAlpha(20),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            "OVERRIDE",
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: _primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    pkg,
+                    style: TextStyle(fontSize: 12, color: _textLight),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(width: 10),
+
+            // Badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: isGame ? _success.withAlpha(20) : Colors.grey.withAlpha(20),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                isGame ? "GAME" : "APP",
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: isGame ? _success : _textLight,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholderIcon(String label) {
+    return Container(
+      color: _primary.withAlpha(15),
+      child: Center(
+        child: Text(
+          _getSafeInitial(label),
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: _primary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _background,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Header
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+              color: _background,
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back_rounded,
+                        color: _textDark,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Text(
+                    "Installed Apps",
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: _textDark,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    "${_visibleApps.length}",
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: _textLight,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Search & Filter
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              color: _background,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: TextField(
+                        onChanged: (v) => setState(() => _filter = v),
+                        style: const TextStyle(fontSize: 14),
+                        decoration: InputDecoration(
+                          hintText: "Search apps...",
+                          hintStyle: TextStyle(color: _textLight.withAlpha(150)),
+                          prefixIcon: Icon(Icons.search_rounded, color: _textLight, size: 20),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  GestureDetector(
+                    onTap: () => setState(() => _onlyGames = !_onlyGames),
+                    child: Container(
+                      height: 46,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: _onlyGames ? _success.withAlpha(20) : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: _onlyGames ? _success : Colors.grey.shade200,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.games_rounded,
+                            size: 18,
+                            color: _onlyGames ? _success : _textLight,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            "Games",
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _onlyGames ? _success : _textLight,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // List
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(color: _primary))
+                  : _visibleApps.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.search_off_rounded, size: 48, color: _textLight.withAlpha(100)),
+                              const SizedBox(height: 12),
+                              Text(
+                                "No apps found",
+                                style: TextStyle(color: _textLight),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _visibleApps.length,
+                          itemBuilder: (_, i) => _appTile(_visibleApps[i]),
+                        ),
+            ),
+
+            // Footer
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: Colors.white,
+              child: Text(
+                "${_apps.length} apps detected • ${_visibleApps.length} shown",
+                style: TextStyle(fontSize: 12, color: _textLight),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
