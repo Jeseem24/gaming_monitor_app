@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Don't backup SharedPreferences -->
+        <exclude domain="sharedpref" path="."/>
+        <!-- Don't backup databases -->
+        <exclude domain="database" path="."/>
+        <!-- Don't backup files -->
+        <exclude domain="file" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <!-- Don't transfer SharedPreferences to new device -->
+        <exclude domain="sharedpref" path="."/>
+        <exclude domain="database" path="."/>
+        <exclude domain="file" path="."/>
+    </device-transfer>
+</data-extraction-rules>
