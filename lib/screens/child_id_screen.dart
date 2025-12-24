@@ -18,6 +18,14 @@ class _ChildIdScreenState extends State<ChildIdScreen> {
   String _childId = "";
   String _childName = "";
 
+  // 🎨 Consistent theme colors
+  static const Color _primary = Color(0xFF3D77FF);
+  static const Color _error = Color(0xFFE74C3C);
+  static const Color _success = Color(0xFF2ECC71);
+  static const Color _textDark = Color(0xFF2D3436);
+  static const Color _textLight = Color(0xFF636E72);
+  static const Color _background = Color(0xFFF8F9FA);
+
   @override
   void initState() {
     super.initState();
@@ -40,9 +48,9 @@ class _ChildIdScreenState extends State<ChildIdScreen> {
     });
   }
 
-  // 🔥 LOGOUT FLOW
+  // 🔥 FIXED LOGOUT FLOW
   Future<void> _handleLogout() async {
-    final ok = await showDialog(
+    final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (_) => const PinVerifyScreen(),
@@ -51,200 +59,335 @@ class _ChildIdScreenState extends State<ChildIdScreen> {
     if (ok != true) return;
 
     final prefs = await SharedPreferences.getInstance();
+    
+    // 1. Stop the service first
     final running = prefs.getBool("service_running") ?? false;
-
     if (running) {
       await ServiceController.stopMonitoringService();
     }
 
-    await prefs.clear();
+    // 2. ✅ SELECTIVE CLEAR (Don't use prefs.clear())
+    // We keep: consent_done, notif_done, pin_set, parent_pin, app_overrides
+    // We remove: user session data
+    final keysToRemove = [
+      "parent_id",
+      "parent_email",
+      "auth_token",
+      "child_list",
+      "selected_child_id",
+      "selected_child_name",
+      "service_running"
+    ];
+
+    for (String key in keysToRemove) {
+      await prefs.remove(key);
+    }
+    
+    debugPrint("🚪 Logout: Session data cleared, Onboarding data preserved.");
 
     if (!mounted) return;
 
+    // 3. Go back to Login (MonitoringGate will now handle this correctly)
     Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+  }
+
+  void _copyId() async {
+    await Clipboard.setData(ClipboardData(text: _childId));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+            SizedBox(width: 10),
+            Text("Child ID copied to clipboard"),
+          ],
+        ),
+        backgroundColor: _success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    const primaryBlue = Color(0xFF3D77FF);
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Child Profile"),
-        backgroundColor: primaryBlue,
-        elevation: 0,
-      ),
-
+      backgroundColor: _background,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(26, 20, 26, 26),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const SizedBox(height: 10),
-
-              // ⭐ Top Icon
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: primaryBlue.withOpacity(0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.child_care_rounded,
-                  size: 42,
-                  color: primaryBlue,
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              const Text(
-                "Linked Child Profile",
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.black87,
-                ),
-              ),
-
-              const SizedBox(height: 6),
-
-              const Text(
-                "Details of the child connected to this device.",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.4,
-                  color: Colors.black54,
-                ),
-              ),
-
-              const SizedBox(height: 30),
-
-              // ⭐ CARD
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  vertical: 24,
-                  horizontal: 20,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 12,
-                      offset: Offset(0, 4),
+        child: Column(
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: const Icon(
+                        Icons.arrow_back_rounded,
+                        color: _textDark,
+                        size: 22,
+                      ),
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 14),
+                  const Text(
+                    "Child Profile",
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: _textDark,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Content
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
                 child: Column(
                   children: [
-                    if (_childName.isNotEmpty) ...[
-                      const Text(
-                        "CHILD NAME",
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.black54,
-                          letterSpacing: 0.7,
+                    const SizedBox(height: 20),
+
+                    // Avatar
+                    Container(
+                      width: 90,
+                      height: 90,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            _primary.withAlpha(30),
+                            _primary.withAlpha(15),
+                          ],
                         ),
+                        shape: BoxShape.circle,
                       ),
-                      const SizedBox(height: 8),
+                      child: Center(
+                        child: _childName.isNotEmpty
+                            ? Text(
+                                _childName[0].toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 36,
+                                  fontWeight: FontWeight.w700,
+                                  color: _primary,
+                                ),
+                              )
+                            : const Icon(
+                                Icons.child_care_rounded,
+                                size: 44,
+                                color: _primary,
+                              ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Name
+                    if (_childName.isNotEmpty) ...[
                       Text(
                         _childName,
                         style: const TextStyle(
-                          fontSize: 22,
+                          fontSize: 26,
                           fontWeight: FontWeight.w700,
+                          color: _textDark,
                         ),
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 4),
                     ],
 
+                    // Subtitle
                     const Text(
-                      "CHILD DEVICE ID",
+                      "Linked to this device",
                       style: TextStyle(
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.7,
-                        color: Colors.black54,
+                        color: _textLight,
                       ),
                     ),
 
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 32),
 
-                    SelectableText(
-                      _childId,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1.2,
-                        color: Colors.black87,
+                    // Info Card
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade100),
+                      ),
+                      child: Column(
+                        children: [
+                          _infoRow(
+                            icon: Icons.fingerprint_rounded,
+                            label: "Child ID",
+                            value: _childId,
+                            showCopy: _childId != "No child selected",
+                            onCopy: _copyId,
+                          ),
+
+                          if (_childName.isNotEmpty) ...[
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Divider(height: 1),
+                            ),
+                            _infoRow(
+                              icon: Icons.person_rounded,
+                              label: "Name",
+                              value: _childName,
+                            ),
+                          ],
+
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: Divider(height: 1),
+                          ),
+
+                          _infoRow(
+                            icon: Icons.link_rounded,
+                            label: "Status",
+                            value: _childId != "No child selected" ? "Connected" : "Not Connected",
+                            valueColor: _childId != "No child selected" ? _success : _error,
+                          ),
+                        ],
                       ),
                     ),
+
+                    const SizedBox(height: 24),
+
+                    if (_childId != "No child selected")
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.copy_rounded, size: 20),
+                          label: const Text(
+                            "COPY CHILD ID",
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _primary,
+                            side: BorderSide(color: _primary.withAlpha(100), width: 1.5),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: _copyId,
+                        ),
+                      ),
+
+                    const SizedBox(height: 40),
                   ],
                 ),
               ),
+            ),
 
-              const SizedBox(height: 30),
-
-              if (_childId != "No child selected")
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.copy),
+            // Logout Button
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.logout_rounded, size: 22),
                   label: const Text(
-                    "COPY ID",
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    "LOGOUT",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: primaryBlue,
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 14,
-                      horizontal: 26,
-                    ),
+                    backgroundColor: _error,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                  onPressed: () async {
-                    await Clipboard.setData(ClipboardData(text: _childId));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Child ID copied")),
-                    );
-                  },
+                  onPressed: _handleLogout,
                 ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-              const SizedBox(height: 120), // space before bottom button
+  Widget _infoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color? valueColor,
+    bool showCopy = false,
+    VoidCallback? onCopy,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: _primary.withAlpha(15),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 20, color: _primary),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: _textLight,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: valueColor ?? _textDark,
+                ),
+              ),
             ],
           ),
         ),
-      ),
-
-      // ⭐ BIG FIXED BOTTOM LOGOUT BUTTON
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(20),
-        child: SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.logout_rounded, size: 24),
-            label: const Text(
-              "LOGOUT",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red.shade600,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+        if (showCopy && onCopy != null)
+          GestureDetector(
+            onTap: onCopy,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _background,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.copy_rounded,
+                size: 18,
+                color: _textLight,
               ),
             ),
-            onPressed: _handleLogout,
           ),
-        ),
-      ),
+      ],
     );
   }
 }
