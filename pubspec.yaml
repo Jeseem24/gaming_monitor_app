@@ -2,7 +2,7 @@ name: digital_twin_monitor
 description: "Digital Twin–Based Mobile Gaming Behavior Monitoring System"
 publish_to: "none"
 
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: ^3.10.1
@@ -13,7 +13,7 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   shared_preferences: ^2.1.1
-  permission_handler: ^11.3.1
+  permission_handler: ^12.0.1
   sqflite: ^2.3.0
   path: ^1.8.0
   http: ^1.2.0
@@ -22,16 +22,19 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  flutter_launcher_icons: ^0.13.1
+  # Ensure this version is current
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
-
   assets:
     - assets/icons/
 
-flutter_icons:
-  android: true
-  ios: false
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
   image_path: "assets/icons/app_icon.png"
   min_sdk_android: 21
+  # Adaptive icons configuration
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icons/app_icon.png"
