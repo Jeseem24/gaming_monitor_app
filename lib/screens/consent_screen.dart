@@ -1,13 +1,11 @@
+// lib/screens/consent_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// 🔒 KEEP IMPORTS (even if unused now)
-import 'pin_create_screen.dart';
-import 'monitoring_screen.dart';
-import 'notification_gate_screen.dart';
+import 'monitoring_gate.dart';
 
 const MethodChannel _usageChannel = MethodChannel('usage_access');
 
@@ -23,14 +21,20 @@ class _ConsentScreenState extends State<ConsentScreen>
   bool? _usageGranted;
   Timer? _pollTimer;
   bool _consentCompleted = false;
+  bool _isProcessing = false;
 
+  // 🎨 Theme colors - use throughout the app
+  static const Color _primary = Color(0xFF3D77FF);
+  static const Color _success = Color(0xFF2ECC71);
+  static const Color _error = Color(0xFFE74C3C);
+  static const Color _textDark = Color(0xFF2D3436);
+  static const Color _textLight = Color(0xFF636E72);
+  static const Color _background = Color(0xFFF8F9FA);
 
   @override
   void initState() {
     super.initState();
-
     WidgetsBinding.instance.addObserver(this);
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkUsageAccess();
       _startPolling();
@@ -44,9 +48,6 @@ class _ConsentScreenState extends State<ConsentScreen>
     super.dispose();
   }
 
-  // ============================================================
-  // ✅ APP LIFECYCLE SAFE POLLING
-  // ============================================================
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -58,40 +59,32 @@ class _ConsentScreenState extends State<ConsentScreen>
   }
 
   void _startPolling() {
-  if (_consentCompleted) return;
-
-  _pollTimer?.cancel();
-  _pollTimer = Timer.periodic(
-    const Duration(seconds: 2),
-    (_) => _checkUsageAccess(),
-  );
-}
-
+    if (_consentCompleted) return;
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => _checkUsageAccess(),
+    );
+  }
 
   void _stopPolling() {
     _pollTimer?.cancel();
     _pollTimer = null;
   }
 
-  // ============================================================
-  // USAGE ACCESS CHECK
-  // ============================================================
   Future<void> _checkUsageAccess() async {
-  if (!mounted || _consentCompleted) return;
-
-  try {
-    final bool allowed =
-        await _usageChannel.invokeMethod('check_usage');
-
     if (!mounted || _consentCompleted) return;
-    setState(() => _usageGranted = allowed);
-  } on MissingPluginException {
-    // ✅ Engine temporarily detached — safe to ignore
-  } catch (e) {
-    debugPrint('check_usage error (safe ignore): $e');
-  }
-}
 
+    try {
+      final bool allowed = await _usageChannel.invokeMethod('check_usage');
+      if (!mounted || _consentCompleted) return;
+      setState(() => _usageGranted = allowed);
+    } on MissingPluginException {
+      // Engine temporarily detached — safe to ignore
+    } catch (e) {
+      debugPrint('check_usage error (safe ignore): $e');
+    }
+  }
 
   Future<void> _openUsageSettings() async {
     try {
@@ -101,231 +94,375 @@ class _ConsentScreenState extends State<ConsentScreen>
     }
   }
 
-  // ============================================================
-  // CONTINUE FLOW
-  // ============================================================
-Future<void> _onIHaveEnabled() async {
-  _stopPolling(); // ⛔ stop polling first
+  Future<void> _onIHaveEnabled({bool fromBottomSheet = false}) async {
+    if (_isProcessing || _consentCompleted) return;
 
-  await _checkUsageAccess(); // ✅ allow one final check
+    setState(() => _isProcessing = true);
+    _stopPolling();
 
-  if (_usageGranted == true) {
-    _consentCompleted = true; // ✅ mark complete ONLY after success
+    if (fromBottomSheet && mounted) {
+      Navigator.of(context).pop();
+    }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('consent_done', true);
+    await _checkUsageAccess();
 
-    final notifStatus = await Permission.notification.request();
-    await prefs.setBool('notif_done', notifStatus.isGranted);
+    if (_usageGranted == true) {
+      _consentCompleted = true;
 
-    if (!mounted) return;
+      final prefs = await SharedPreferences.getInstance();
 
-    if (notifStatus.isGranted) {
-      Navigator.of(context).pushNamedAndRemoveUntil(
-        '/',
+      await prefs.setBool('consent_done', true);
+      debugPrint("✅ SAVED: consent_done = true");
+
+      final notifStatus = await Permission.notification.request();
+      await prefs.setBool('notif_done', notifStatus.isGranted);
+      debugPrint("✅ SAVED: notif_done = ${notifStatus.isGranted}");
+
+      await prefs.reload();
+
+      debugPrint("✅ VERIFY: consent_done = ${prefs.getBool('consent_done')}");
+      debugPrint("✅ VERIFY: notif_done = ${prefs.getBool('notif_done')}");
+
+      if (!mounted) return;
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const MonitoringGate()),
         (route) => false,
       );
     } else {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => const NotificationGateScreen(),
+      if (!mounted) return;
+
+      setState(() => _isProcessing = false);
+      _startPolling();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Usage Access still not enabled. Please enable it and try again.',
+          ),
+          backgroundColor: _error,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 4),
         ),
       );
     }
-  } else {
-    // ❌ consent not completed → polling can resume if needed
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Usage Access still not enabled. Please enable it and try again.',
-        ),
-        duration: Duration(seconds: 4),
-      ),
-    );
   }
-}
 
-
-
-  // ============================================================
-  // STATUS ROW (UNCHANGED)
-  // ============================================================
   Widget _statusRow() {
     Color dotColor;
     String label;
+    IconData icon;
 
     if (_usageGranted == null) {
       dotColor = Colors.grey;
       label = 'Checking usage access…';
+      icon = Icons.hourglass_empty_rounded;
     } else if (_usageGranted == true) {
-      dotColor = const Color(0xFF2ECC71);
+      dotColor = _success;
       label = 'Usage Access: ENABLED';
+      icon = Icons.check_circle_rounded;
     } else {
-      dotColor = const Color(0xFFE74C3C);
+      dotColor = _error;
       label = 'Usage Access: NOT ENABLED';
+      icon = Icons.cancel_rounded;
     }
 
-    return Row(
-      children: [
-        Container(
-          width: 14,
-          height: 14,
-          decoration: BoxDecoration(
-            color: dotColor,
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: dotColor.withOpacity(0.25),
-                blurRadius: 6,
-                spreadRadius: 1,
-                offset: const Offset(0, 2),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: dotColor.withAlpha(20),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: dotColor.withAlpha(50)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: dotColor, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: dotColor,
               ),
-            ],
+            ),
           ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          ),
-        ),
-      ],
+          if (_usageGranted == null)
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: dotColor,
+              ),
+            ),
+        ],
+      ),
     );
   }
 
-  // ============================================================
-  // INSTRUCTION SHEET (UNCHANGED)
-  // ============================================================
   void _showHowToSheet() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) {
-        final height = MediaQuery.of(context).size.height * 0.5;
-        return SizedBox(
-          height: height,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 60,
-                  height: 6,
-                  margin: const EdgeInsets.only(bottom: 12),
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            24,
+            16,
+            24,
+            MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Handle
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
                   decoration: BoxDecoration(
                     color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-                const Text(
-                  'How to enable Usage Access',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 24),
+
+              // Title
+              const Text(
+                'How to Enable Usage Access',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: _textDark,
                 ),
-                const SizedBox(height: 12),
-                const Text(
-                  '1. Tap "Open Usage Access Settings".\n'
-                  '2. Find "Digital Twin Monitor" and enable "Permit usage access".\n'
-                  '3. Return here and press "I HAVE ENABLED ACCESS".',
-                  style: TextStyle(fontSize: 15),
-                ),
-                const SizedBox(height: 20),
-                const Divider(),
-                const SizedBox(height: 12),
-                _statusRow(),
-                const Spacer(),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      _openUsageSettings();
-                      Navigator.pop(context);
-                    },
-                    child: const Text('OPEN USAGE ACCESS SETTINGS'),
+              ),
+              const SizedBox(height: 20),
+
+              // Steps
+              _buildStep('1', 'Tap "Open Settings" below'),
+              _buildStep('2', 'Find "Digital Twin Monitor"'),
+              _buildStep('3', 'Enable "Permit usage access"'),
+              _buildStep('4', 'Return here and confirm'),
+
+              const SizedBox(height: 20),
+
+              // Status
+              _statusRow(),
+
+              const SizedBox(height: 24),
+
+              // Buttons
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _openUsageSettings,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _primary,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'OPEN SETTINGS',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
                   ),
                 ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _onIHaveEnabled();
-                    },
-                    child: const Text('I HAVE ENABLED ACCESS'),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: OutlinedButton(
+                  onPressed: () => _onIHaveEnabled(fromBottomSheet: true),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _primary,
+                    side: const BorderSide(color: _primary, width: 1.5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'I HAVE ENABLED ACCESS',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
     );
   }
 
-  // ============================================================
-  // MAIN UI (UNCHANGED)
-  // ============================================================
-  @override
-  Widget build(BuildContext context) {
-    final primary = const Color(0xFF3D77FF);
-
-    return Scaffold(
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 30),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                width: 110,
-                height: 110,
-                decoration: BoxDecoration(
-                  color: primary.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Center(
-                  child: Icon(Icons.shield_rounded, size: 64, color: primary),
+  Widget _buildStep(String number, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: _primary.withAlpha(20),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(
+                number,
+                style: const TextStyle(
+                  color: _primary,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
                 ),
               ),
-              const SizedBox(height: 26),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 15,
+              color: _textDark,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _background,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: Column(
+            children: [
+              const Spacer(flex: 1),
+
+              // Icon
+              Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  color: _primary.withAlpha(25),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Icon(
+                  Icons.shield_rounded,
+                  size: 52,
+                  color: _primary,
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              // Title
               const Text(
                 'Parental Consent Required',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w700,
+                  color: _textDark,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
+
+              // Description
               const Text(
-                'This app monitors which apps (games) are used and for how long. '
-                'Only app name and duration are collected — no personal data.',
-                style: TextStyle(fontSize: 15, height: 1.5),
+                'This app monitors which apps (games) are used and for how long. Only app name and duration are collected — no personal data.',
+                style: TextStyle(
+                  fontSize: 15,
+                  height: 1.5,
+                  color: _textLight,
+                ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 24),
-              _statusRow(),
               const SizedBox(height: 28),
-              ElevatedButton(
-                onPressed: _showHowToSheet,
-                child: const Text('GIVE CONSENT TO START MONITORING'),
+
+              // Status
+              _statusRow(),
+
+              const Spacer(flex: 2),
+
+              // Primary Button
+              SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton(
+                  onPressed: _isProcessing ? null : _showHowToSheet,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _primary,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: _primary.withAlpha(150),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: _isProcessing
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'GIVE CONSENT',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+
+              // Secondary Button
               TextButton(
-                onPressed: _onIHaveEnabled,
-                child: const Text('I HAVE ENABLED ACCESS'),
+                onPressed: _isProcessing ? null : () => _onIHaveEnabled(),
+                style: TextButton.styleFrom(
+                  foregroundColor: _primary,
+                ),
+                child: const Text(
+                  'I have already enabled access',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
               ),
-              const Spacer(),
-              const Text(
+
+              const SizedBox(height: 20),
+
+              // Footer
+              Text(
                 'By continuing you confirm you are the parent/guardian and grant permission for background monitoring.',
-                style: TextStyle(fontSize: 12, color: Colors.black54),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: _textLight.withAlpha(180),
+                  height: 1.4,
+                ),
                 textAlign: TextAlign.center,
               ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
