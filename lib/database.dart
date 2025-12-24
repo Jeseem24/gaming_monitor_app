@@ -1,6 +1,8 @@
 // lib/database.dart
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+// ✅ Add this at the top for debugPrint
 
 class GameDatabase {
   GameDatabase._private();
@@ -28,35 +30,27 @@ class GameDatabase {
         package_name TEXT NOT NULL,
         game_name TEXT,
         genre TEXT,
-        start_time TEXT NOT NULL,
-        end_time TEXT NOT NULL,
+        start_time INTEGER NOT NULL,
+        end_time INTEGER NOT NULL,
         duration INTEGER NOT NULL,
-        timestamp TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
         synced INTEGER NOT NULL DEFAULT 0
       )
     ''');
+    // ✅ FIX: Changed TEXT to INTEGER for time columns
   }
 
-  // -----------------------------------------------------------
-  // INSERT EVENT
-  // -----------------------------------------------------------
   Future<int> insertEvent(Map<String, dynamic> event) async {
     final db = await database;
-    print("🔥 [DB] INSERT EVENT → $event");
+    debugPrint("🔥 [DB] INSERT EVENT → $event");
     return db.insert("game_events", event);
   }
 
-  // -----------------------------------------------------------
-  // GET PENDING UNSYNCED EVENTS
-  // -----------------------------------------------------------
   Future<List<Map<String, dynamic>>> getPendingEvents() async {
     final db = await database;
     return await db.query("game_events", where: "synced = ?", whereArgs: [0]);
   }
 
-  // -----------------------------------------------------------
-  // MARK EVENT AS SYNCED
-  // -----------------------------------------------------------
   Future<void> markEventSynced(int id) async {
     final db = await database;
     await db.update(
@@ -67,24 +61,24 @@ class GameDatabase {
     );
   }
 
-  // -----------------------------------------------------------
-  // DELETE OLD EVENTS
-  // -----------------------------------------------------------
+  // ✅ FIX: Corrected SQL query for epoch milliseconds
   Future<void> deleteOlderThan(int days) async {
     final db = await database;
+    final cutoffMs = DateTime.now()
+        .subtract(Duration(days: days))
+        .millisecondsSinceEpoch;
+
     await db.delete(
       "game_events",
-      where: "timestamp <= datetime('now', '-$days days')",
+      where: "timestamp < ?",
+      whereArgs: [cutoffMs],
     );
+    debugPrint("🧹 [DB] Deleted events older than $days days");
   }
 
-  // -----------------------------------------------------------
-  // CLEAR ALL EVENTS (NEW)
-  // Called when a new child_id is generated
-  // -----------------------------------------------------------
   Future<void> clearAllEvents() async {
     final db = await database;
-    print("🧹 [DB] CLEARING ALL LOCAL EVENTS...");
+    debugPrint("🧹 [DB] CLEARING ALL LOCAL EVENTS...");
     await db.delete("game_events");
   }
 }
