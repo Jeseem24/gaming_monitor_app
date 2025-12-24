@@ -14,7 +14,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
@@ -31,122 +30,129 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // ✅ SAFE: cache engine for background services ONLY
-        FlutterEngineCache.getInstance().put("my_engine", flutterEngine)
-
         // ---------------- INSTALLED APPS ----------------
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_INSTALLED)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CHANNEL_INSTALLED
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
 
-                    "list_installed" -> {
-                        GlobalScope.launch(Dispatchers.IO) {
-                            val apps = fetchInstalledApps()
-                            withContext(Dispatchers.Main) {
-                                result.success(apps)
-                            }
+                "list_installed" -> {
+                    GlobalScope.launch(Dispatchers.IO) {
+                        val apps = fetchInstalledApps()
+                        withContext(Dispatchers.Main) {
+                            result.success(apps)
                         }
                     }
-
-                    "refresh_installed" -> {
-                        GlobalScope.launch(Dispatchers.IO) {
-                            iconCache.clear()
-                            clearDiskCache()
-                            withContext(Dispatchers.Main) {
-                                result.success(true)
-                            }
-                        }
-                    }
-
-                    "set_override" -> {
-                        val pkg = call.argument<String>("package") ?: ""
-                        val value = call.argument<String>("value") ?: ""
-                        GlobalScope.launch(Dispatchers.IO) {
-                            val ok = setOverride(pkg, value)
-                            withContext(Dispatchers.Main) {
-                                result.success(ok)
-                            }
-                        }
-                    }
-
-                    "clear_override" -> {
-                        val pkg = call.argument<String>("package") ?: ""
-                        GlobalScope.launch(Dispatchers.IO) {
-                            val ok = clearOverride(pkg)
-                            withContext(Dispatchers.Main) {
-                                result.success(ok)
-                            }
-                        }
-                    }
-
-                    else -> result.notImplemented()
                 }
+
+                "refresh_installed" -> {
+                    GlobalScope.launch(Dispatchers.IO) {
+                        iconCache.clear()
+                        clearDiskCache()
+                        withContext(Dispatchers.Main) {
+                            result.success(true)
+                        }
+                    }
+                }
+
+                "set_override" -> {
+                    val pkg = call.argument<String>("package") ?: ""
+                    val value = call.argument<String>("value") ?: ""
+                    GlobalScope.launch(Dispatchers.IO) {
+                        val ok = setOverride(pkg, value)
+                        withContext(Dispatchers.Main) {
+                            result.success(ok)
+                        }
+                    }
+                }
+
+                "clear_override" -> {
+                    val pkg = call.argument<String>("package") ?: ""
+                    GlobalScope.launch(Dispatchers.IO) {
+                        val ok = clearOverride(pkg)
+                        withContext(Dispatchers.Main) {
+                            result.success(ok)
+                        }
+                    }
+                }
+
+                else -> result.notImplemented()
             }
+        }
 
         // ---------------- GAME MONITOR SERVICE ----------------
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "game_detection")
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "start_service" -> {
-                        try {
-                            startForegroundService(
-                                Intent(this, GameMonitorService::class.java)
-                            )
-                            result.success(true)
-                        } catch (e: Exception) {
-                            result.error("ERR", "Failed to start service: $e", null)
-                        }
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "game_detection"
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "start_service" -> {
+                    try {
+                        startForegroundService(
+                            Intent(this, GameMonitorService::class.java)
+                        )
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERR", "Failed to start service: $e", null)
                     }
-
-                    "stop_service" -> {
-                        try {
-                            stopService(
-                                Intent(this, GameMonitorService::class.java)
-                            )
-                            result.success(true)
-                        } catch (e: Exception) {
-                            result.error("ERR", "Failed to stop service: $e", null)
-                        }
-                    }
-
-                    else -> result.notImplemented()
                 }
+
+                "stop_service" -> {
+                    try {
+                        stopService(
+                            Intent(this, GameMonitorService::class.java)
+                        )
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERR", "Failed to stop service: $e", null)
+                    }
+                }
+
+                else -> result.notImplemented()
             }
+        }
 
         // ---------------- USAGE ACCESS ----------------
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "usage_access")
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "check_usage" -> {
-                        try {
-                            val appOps =
-                                getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-                            val mode = appOps.checkOpNoThrow(
-                                "android:get_usage_stats",
-                                android.os.Process.myUid(),
-                                packageName
-                            )
-                            result.success(mode == AppOpsManager.MODE_ALLOWED)
-                        } catch (e: Exception) {
-                            result.error("ERR", "check_usage failed: $e", null)
-                        }
-                    }
+        // ---------------- USAGE ACCESS ----------------
+MethodChannel(
+    flutterEngine.dartExecutor.binaryMessenger,
+    "usage_access"
+).setMethodCallHandler { call, result ->
+    when (call.method) {
+        "check_usage" -> {
+            try {
+                val appOps =
+                    getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
 
-                    "open_settings" -> {
-                        try {
-                            val intent =
-                                Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            startActivity(intent)
-                            result.success(true)
-                        } catch (e: Exception) {
-                            result.error("ERR", "open_settings failed: $e", null)
-                        }
-                    }
+                val mode = appOps.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    android.os.Process.myUid(),
+                    packageName
+                )
 
-                    else -> result.notImplemented()
-                }
+                result.success(mode == AppOpsManager.MODE_ALLOWED)
+            } catch (e: Exception) {
+                result.error("ERR", "check_usage failed: $e", null)
             }
+        }
+
+        "open_settings" -> {
+            try {
+                val intent =
+                    Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                result.success(true)
+            } catch (e: Exception) {
+                result.error("ERR", "open_settings failed: $e", null)
+            }
+        }
+
+        else -> result.notImplemented()
+    }
+}
+
 
         // ---------------- NOTIFICATION PERMISSION ----------------
         MethodChannel(
@@ -221,7 +227,8 @@ class MainActivity : FlutterActivity() {
                 val pkg = info.packageName ?: continue
 
                 if ((info.flags and ApplicationInfo.FLAG_SYSTEM) != 0) {
-                    if (pkg.contains("android") ||
+                    if (
+                        pkg.contains("android") ||
                         pkg.contains("google") ||
                         pkg.contains("com.android")
                     ) continue
@@ -274,24 +281,21 @@ class MainActivity : FlutterActivity() {
         pkg: String
     ): Boolean {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                 info.category == ApplicationInfo.CATEGORY_GAME
             ) return true
 
             val lowerLabel = label.lowercase()
-            if (listOf("game", "fight", "battle", "clash", "racing", "arena")
+            if (
+                listOf("game", "fight", "battle", "clash", "racing", "arena")
                     .any { lowerLabel.contains(it) }
             ) return true
 
             val lowerPkg = pkg.lowercase()
-            if (listOf(
-                    "game",
-                    "pubg",
-                    "bgmi",
-                    "clash",
-                    "minecraft",
-                    "roblox"
-                ).any { lowerPkg.contains(it) }
+            if (
+                listOf("game", "pubg", "bgmi", "clash", "minecraft", "roblox")
+                    .any { lowerPkg.contains(it) }
             ) return true
 
         } catch (_: Exception) {
@@ -306,9 +310,11 @@ class MainActivity : FlutterActivity() {
                 is BitmapDrawable -> drawable.bitmap
                 else -> {
                     val w =
-                        if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 64
+                        if (drawable.intrinsicWidth > 0)
+                            drawable.intrinsicWidth else 64
                     val h =
-                        if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 64
+                        if (drawable.intrinsicHeight > 0)
+                            drawable.intrinsicHeight else 64
                     val bmp =
                         Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     val canvas = Canvas(bmp)
