@@ -34,7 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _login() async {
+    Future<void> _login() async {
     final email = _emailCtl.text.trim();
     final pass = _passCtl.text.trim();
 
@@ -48,78 +48,33 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
 
-      // ==================== MOCK ACCOUNTS ====================
-      if (email == "zero@test.com" && pass == "1111") {
-        await prefs.setString("parent_email", email);
-        await prefs.setString("parent_id", "mock_parent_zero");
-        await prefs.setString("auth_token", "mock_token_zero");
-        await prefs.setString("child_list", jsonEncode([]));
-
-        debugPrint("✅ SAVED: parent_id = mock_parent_zero");
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
-        );
-        return;
-      }
-
-      if (email == "one@test.com" && pass == "3333") {
-        final fakeChildren = [
-          {"child_id": "child_100", "name": "Single Child"},
-        ];
-        await prefs.setString("parent_email", email);
-        await prefs.setString("parent_id", "mock_parent_one");
-        await prefs.setString("auth_token", "mock_token_one");
-        await prefs.setString("child_list", jsonEncode(fakeChildren));
-
-        debugPrint("✅ SAVED: parent_id = mock_parent_one");
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
-        );
-        return;
-      }
-
-      if (email == "two@test.com" && pass == "2222") {
-        final fakeChildren = [
-          {"child_id": "child_001", "name": "Child One"},
-          {"child_id": "child_002", "name": "Child Two"},
-        ];
-        await prefs.setString("parent_email", email);
-        await prefs.setString("parent_id", "mock_parent_two");
-        await prefs.setString("auth_token", "mock_token_two");
-        await prefs.setString("child_list", jsonEncode(fakeChildren));
-
-        debugPrint("✅ SAVED: parent_id = mock_parent_two");
-
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
-        );
-        return;
-      }
+      // (Keep Mock Accounts code here...)
+      if (email == "zero@test.com" && pass == "1111") { /* ... */ }
+      // ... (rest of mock accounts)
 
       // ==================== REAL BACKEND ====================
+      debugPrint("🌐 Sending Login to: $baseUrl/parent/login");
+      debugPrint("📤 Payload: email: $email");
+
       final response = await http.post(
         Uri.parse("$baseUrl/parent/login"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"email": email, "password": pass}),
+        body: jsonEncode({"username": email, "password": pass}),
       );
 
+      // ✅ ADD THESE TWO LINES TO SEE THE ERROR:
+      debugPrint("📥 Status Code: ${response.statusCode}");
+      debugPrint("📥 Response Body: ${response.body}");
+
       if (response.statusCode != 200) {
-        _toast("Invalid login. Check credentials.");
+        _toast("Server Error (${response.statusCode}). Check logs."); // Updated message
         setState(() => _busy = false);
         return;
       }
 
       final data = jsonDecode(response.body);
       if (data["success"] != true) {
-        _toast("Login failed");
+        _toast("Login failed: ${data["message"] ?? "Invalid credentials"}");
         setState(() => _busy = false);
         return;
       }
@@ -132,15 +87,14 @@ class _LoginScreenState extends State<LoginScreen> {
       await prefs.setString("auth_token", data["token"]?.toString() ?? "local_token");
       await prefs.setString("child_list", jsonEncode(children));
 
-      debugPrint("✅ SAVED: parent_id = $parentId");
-
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const ChildSelectionScreen()),
       );
     } catch (e) {
-      _toast("Error logging in: $e");
+      debugPrint("🚨 Exception during login: $e");
+      _toast("Connection error. Check internet.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
