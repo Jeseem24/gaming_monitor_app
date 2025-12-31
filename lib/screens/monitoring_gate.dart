@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'consent_screen.dart';
 import 'notification_gate_screen.dart';
+import 'battery_gate_screen.dart'; // ✅ Added import
 import 'pin_create_screen.dart';
 import 'login_screen.dart';
 import 'child_selection_screen.dart';
@@ -27,64 +28,56 @@ class _MonitoringGateState extends State<MonitoringGate> {
   }
 
   Future<void> _checkOnboarding() async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    final consent = prefs.getBool('consent_done') ?? false;
-    final notif = prefs.getBool('notif_done') ?? false;
-    final pin = prefs.getBool('pin_set') ?? false;
-    final parentId = prefs.getString("parent_id") ?? "";
-    final childId = prefs.getString("selected_child_id") ?? "";
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      
+      final consent = prefs.getBool('consent_done') ?? false;
+      final notif = prefs.getBool('notif_done') ?? false;
+      final battery = prefs.getBool('battery_done') ?? false; // ✅ Added
+      final pin = prefs.getBool('pin_set') ?? false;
+      final parentId = prefs.getString("parent_id") ?? "";
+      final childId = prefs.getString("selected_child_id") ?? "";
 
-    final login = parentId.isNotEmpty;
-    final child = childId.isNotEmpty;
+      final login = parentId.isNotEmpty;
+      final child = childId.isNotEmpty;
 
-    debugPrint("═══════════════════════════════════════");
-    debugPrint("🔍 MonitoringGate Check:");
-    debugPrint("   consent_done: $consent");
-    debugPrint("   notif_done: $notif");
-    debugPrint("   pin_set: $pin");
-    debugPrint("   parent_id: '$parentId'");
-    debugPrint("   selected_child_id: '$childId'");
-    debugPrint("═══════════════════════════════════════");
+      debugPrint("🔍 MonitoringGate Check: C:$consent N:$notif B:$battery P:$pin L:$login C:$child");
 
-    Widget screen;
+      Widget screen;
 
-    if (!consent) {
-      debugPrint("➡️ Going to ConsentScreen");
-      screen = const ConsentScreen();
-    } else if (!notif) {
-      debugPrint("➡️ Going to NotificationGateScreen");
-      screen = const NotificationGateScreen();
-    } else if (!pin) {
-      debugPrint("➡️ Going to PinCreateScreen");
-      screen = const PinCreateScreen();
-    } else if (!login) {
-      debugPrint("➡️ Going to LoginScreen");
-      screen = const LoginScreen();
-    } else if (!child) {
-      debugPrint("➡️ Going to ChildSelectionScreen");
-      screen = const ChildSelectionScreen();
-    } else {
-      debugPrint("✅ All complete → MonitoringScreen");
-      screen = const MonitoringScreen();
+      if (!consent) {
+        screen = const ConsentScreen();
+      } else if (!notif) {
+        screen = const NotificationGateScreen();
+      } else if (!battery) {
+        // ✅ Show Battery Screen after Notifications
+        screen = const BatteryGateScreen();
+      } else if (!pin) {
+        screen = const PinCreateScreen();
+      } else if (!login) {
+        screen = const LoginScreen();
+      } else if (!child) {
+        screen = const ChildSelectionScreen();
+      } else {
+        screen = const MonitoringScreen();
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _targetScreen = screen;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint("❌ MonitoringGate error: $e");
+      if (!mounted) return;
+      setState(() {
+        _targetScreen = const ConsentScreen();
+        _loading = false;
+      });
     }
-
-    if (!mounted) return;
-
-    setState(() {
-      _targetScreen = screen;
-      _loading = false;
-    });
-  } catch (e) {
-    debugPrint("❌ MonitoringGate error: $e");
-    if (!mounted) return;
-    setState(() {
-      _targetScreen = const ConsentScreen();
-      _loading = false;
-    });
   }
-}
 
   @override
   Widget build(BuildContext context) {
