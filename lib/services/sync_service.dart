@@ -4,12 +4,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-
 import '../database.dart';
 
 class SyncService {
   static final SyncService instance = SyncService._private();
   Timer? _timer;
+  bool _isSyncing = false; 
 
   SyncService._private();
 
@@ -19,183 +19,78 @@ class SyncService {
     'X-API-KEY': 'secret',
   };
 
-  // --------------------------------------------------------------
-  //  SAFE CHILD ID FETCH
-  // --------------------------------------------------------------
   Future<String?> _getActiveChildId() async {
     final prefs = await SharedPreferences.getInstance();
     final id = prefs.getString("selected_child_id");
-
-    if (id == null || id.trim().isEmpty) {
-      print("⚠️ No child selected → Sync paused");
-      return null;
-    }
-
+    if (id == null || id.trim().isEmpty) return null;
     return id;
   }
 
-  // For UI screens:
-  Future<String?> getChildId() async => _getActiveChildId();
-
-  // --------------------------------------------------------------
-  //  ENSURE SYNC LOOP ALWAYS RUNS ON APP STARTUP
-  // --------------------------------------------------------------
-  bool _syncStarted = false;
-
-  void ensureStarted() {
-    if (_syncStarted) return;
-    _syncStarted = true;
-    startSyncLoop();
-  }
-
-  // --------------------------------------------------------------
-  //  SYNC LOOP
-  // --------------------------------------------------------------
   void startSyncLoop() {
     _timer?.cancel();
-
-    _timer = Timer.periodic(
-      const Duration(seconds: 30),
-      (_) => syncPendingEvents(),
-    );
-
-    print("🔄 SYNC LOOP ACTIVE (every 30 sec)");
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) => syncPendingEvents());
+    print("🔄 SYNC LOOP ACTIVE (every 15 sec)");
   }
 
   void stopSyncLoop() {
     _timer?.cancel();
     _timer = null;
-    _syncStarted = false;
     print("⏹ Sync loop stopped");
   }
 
-  // --------------------------------------------------------------
-  //  SYNC PENDING EVENTS
-  // --------------------------------------------------------------
   Future<void> syncPendingEvents() async {
-    print("🔎 Checking for pending events…");
-
+    if (_isSyncing) return; 
     final childId = await _getActiveChildId();
-    if (childId == null) {
-      print("⛔ No child selected → Skipping sync");
-      return;
-    }
+    if (childId == null) return;
 
     final pending = await GameDatabase.instance.getPendingEvents();
+    if (pending.isEmpty) return;
 
-    if (pending.isEmpty) {
-      print("✅ No events to sync");
-      return;
-    }
-
-    print("📦 Found ${pending.length} events to sync");
-
-    for (final event in pending) {
-      final ok = await _uploadSingleEvent(event, childId);
-
-      if (ok) {
-        await GameDatabase.instance.markEventSynced(event['id']);
-        print("✔ Synced event ID ${event['id']}");
-      } else {
-        print("❗ Event upload failed → Will retry later");
+    _isSyncing = true;
+    try {
+      for (final event in pending) {
+        final ok = await _uploadSingleEvent(event, childId);
+        if (ok) await GameDatabase.instance.markEventSynced(event['id']);
+        else break; 
       }
+    } finally {
+      _isSyncing = false;
     }
   }
 
-  // --------------------------------------------------------------
-  //  UPLOAD 1 EVENT
-  // --------------------------------------------------------------
-Future<bool> _uploadSingleEvent(
-  Map<String, dynamic> event,
-  String childId,
-) async {
-  try {
-    final url = '$_baseUrl/events';
+  Future<bool> _uploadSingleEvent(Map<String, dynamic> event, String childId) async {
+    try {
+      final url = '$_baseUrl/events';
+      final status = event['status']?.toString() ?? "HEARTBEAT";
+      final packageName = event['package_name']?.toString();
+      final gameName = event['game_name']?.toString() ?? packageName ?? "Unknown";
+      if (packageName == null) return true;
 
-    // ----------------------------
-    // Duration: seconds → minutes
-    // ----------------------------
-    int durationSeconds =
-        (event['duration'] is num) ? event['duration'] as int : 0;
+      int parseMs(dynamic v) => (v is num) ? v.toInt() : (int.tryParse(v?.toString() ?? '') ?? DateTime.now().millisecondsSinceEpoch);
 
-    // If milliseconds slipped in, convert
-    if (durationSeconds > 30000) {
-      durationSeconds ~/= 1000;
-    }
+      final timestamp = parseMs(event['timestamp']);
+      final startTime = (event['start_time'] != null) ? parseMs(event['start_time']) : timestamp;
+      final endTime = (event['end_time'] != null) ? parseMs(event['end_time']) : timestamp;
 
-    if (durationSeconds <= 0) {
-      print("❌ Invalid duration → skip event");
-      return true;
-    }
+      int durationRaw = (event['duration'] is num) ? (event['duration'] as num).toInt() : 0;
+      int durationInMinutes = (status == "HEARTBEAT") ? 1 : ((status == "STOP") ? (durationRaw / 60).ceil() : 0);
 
-    int durationMinutes = (durationSeconds / 60).ceil();
-    if (durationMinutes < 1) durationMinutes = 1;
+      final payload = {
+        "user_id": childId,
+        "childdeviceid": "android_$childId",
+        "status": status,
+        "package_name": packageName,
+        "game_name": gameName,
+        "duration": durationInMinutes,
+        "start_time": startTime,
+        "end_time": endTime,
+        "timestamp": timestamp,
+      };
 
-    // ----------------------------
-    // Required fields
-    // ----------------------------
-    final packageName = event['package_name']?.toString();
-    final gameName =
-        event['game_name']?.toString() ?? packageName ?? "Unknown";
-
-    if (packageName == null) {
-      print("❌ Missing package_name → skip event");
-      return true;
-    }
-
-    // ----------------------------
-    // Time fields → MUST be epoch ms (INT)
-    // ----------------------------
-    int parseMs(dynamic v) {
-      if (v is int) return v;
-      if (v is num) return v.toInt();
-      return DateTime.now().millisecondsSinceEpoch;
-    }
-
-    final startTime = parseMs(event['start_time']);
-    final endTime = parseMs(event['end_time']);
-    final timestamp = parseMs(event['timestamp'] ?? event['end_time']);
-
-    // ----------------------------
-    // FINAL PAYLOAD (MATCHES POSTMAN ✔)
-    // ----------------------------
-    final payload = {
-      "user_id": childId,
-      "childdeviceid": "android_$childId",
-      "package_name": packageName,
-      "game_name": gameName,
-      "duration": durationMinutes, // ✅ MINUTES
-      "start_time": startTime,      // ✅ INT
-      "end_time": endTime,          // ✅ INT
-      "timestamp": timestamp,       // ✅ INT
-    };
-
-    print("🌐 Uploading event → ${jsonEncode(payload)}");
-
-    final res = await http.post(
-      Uri.parse(url),
-      headers: _defaultHeaders,
-      body: jsonEncode(payload),
-    );
-
-    if (res.statusCode == 200 || res.statusCode == 201) {
-      print("✅ Backend accepted event → ${res.body}");
-      return true;
-    }
-
-    if (res.statusCode == 400 || res.statusCode == 422) {
-      print("⚠️ Invalid payload → skipping event permanently");
-      return true;
-    }
-
-    print("⚠️ Server error ${res.statusCode}: ${res.body}");
-    return false;
-  } catch (e) {
-    print("🚨 Upload exception: $e");
-    return false;
+      final res = await http.post(Uri.parse(url), headers: _defaultHeaders, body: jsonEncode(payload)).timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200 || res.statusCode == 201) return true;
+      if (res.statusCode == 422 || res.statusCode == 400) return true; 
+      return false;
+    } catch (e) { return false; }
   }
-}
-
-
-
 }
