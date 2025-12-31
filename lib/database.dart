@@ -2,7 +2,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
-// ✅ Add this at the top for debugPrint
 
 class GameDatabase {
   GameDatabase._private();
@@ -19,7 +18,14 @@ class GameDatabase {
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
     String path = join(dbPath, "gaming_monitor.db");
-    return await openDatabase(path, version: 1, onCreate: _createTables);
+    
+    // Incrementing version to 2 to trigger onCreate/onUpgrade if needed
+    // However, for a clean test, it is best to uninstall the app first.
+    return await openDatabase(
+      path, 
+      version: 1, 
+      onCreate: _createTables
+    );
   }
 
   Future<void> _createTables(Database db, int version) async {
@@ -30,14 +36,14 @@ class GameDatabase {
         package_name TEXT NOT NULL,
         game_name TEXT,
         genre TEXT,
-        start_time INTEGER NOT NULL,
-        end_time INTEGER NOT NULL,
+        start_time INTEGER,
+        end_time INTEGER,
         duration INTEGER NOT NULL,
         timestamp INTEGER NOT NULL,
+        status TEXT, -- ✅ ADDED: START, HEARTBEAT, or STOP
         synced INTEGER NOT NULL DEFAULT 0
       )
     ''');
-    // ✅ FIX: Changed TEXT to INTEGER for time columns
   }
 
   Future<int> insertEvent(Map<String, dynamic> event) async {
@@ -61,7 +67,19 @@ class GameDatabase {
     );
   }
 
-  // ✅ FIX: Corrected SQL query for epoch milliseconds
+  // ✅ ADDED: Optimization to keep the database small
+  Future<void> cleanUpSyncedEvents() async {
+    final db = await database;
+    // Delete events that are ALREADY synced and older than 1 day
+    final oneDayAgo = DateTime.now().subtract(const Duration(days: 1)).millisecondsSinceEpoch;
+    int count = await db.delete(
+      "game_events", 
+      where: "synced = 1 AND timestamp < ?", 
+      whereArgs: [oneDayAgo]
+    );
+    debugPrint("🧹 [DB] Cleanup: Removed $count old synced records");
+  }
+
   Future<void> deleteOlderThan(int days) async {
     final db = await database;
     final cutoffMs = DateTime.now()
@@ -80,5 +98,15 @@ class GameDatabase {
     final db = await database;
     debugPrint("🧹 [DB] CLEARING ALL LOCAL EVENTS...");
     await db.delete("game_events");
+  }
+
+  // ✅ ADDED: Prevent memory leaks
+  Future<void> close() async {
+    final db = _database;
+    if (db != null) {
+      await db.close();
+      _database = null;
+      debugPrint("🔒 [DB] Database connection closed");
+    }
   }
 }
