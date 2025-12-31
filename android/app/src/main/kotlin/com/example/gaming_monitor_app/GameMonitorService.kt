@@ -2,10 +2,7 @@ package com.example.gaming_monitor_app
 
 import android.app.*
 import android.content.Intent
-import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.os.IBinder
+import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import android.app.usage.UsageStatsManager
@@ -13,9 +10,11 @@ import android.content.Context
 import android.content.pm.ApplicationInfo
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
-import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.concurrent.timerTask
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
 
 class GameMonitorService : Service() {
 
@@ -24,9 +23,8 @@ class GameMonitorService : Service() {
 
     private var lastPackage: String? = null
     private var lastStartTime: Long = 0
+    private var lastHeartbeatTime: Long = 0 
     private var detectionTimer: Timer? = null
-
-    private val tsFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     override fun onCreate() {
         super.onCreate()
@@ -36,16 +34,6 @@ class GameMonitorService : Service() {
         startDetectionLoop()
     }
 
-    private fun resolveAppName(pkg: String): String {
-    return try {
-        val info = packageManager.getApplicationInfo(pkg, 0)
-        packageManager.getApplicationLabel(info).toString()
-    } catch (e: Exception) {
-        pkg // fallback
-    }
-}
-
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         log("SERVICE STARTED")
         return START_STICKY
@@ -53,233 +41,214 @@ class GameMonitorService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        val restartIntent = Intent(applicationContext, GameMonitorService::class.java)
-        startService(restartIntent)
-        log("TASK REMOVED → SERVICE RESTARTED")
+        val restartIntent = Intent(applicationContext, GameMonitorService::class.java).also { it.setPackage(packageName) }
+        val pendingIntent = PendingIntent.getService(this, 1, restartIntent, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        (getSystemService(Context.ALARM_SERVICE) as AlarmManager).set(AlarmManager.RTC, System.currentTimeMillis() + 1000, pendingIntent)
+        log("TASK REMOVED → PERSISTENCE ALARM SET")
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         log("SERVICE DESTROYED")
         detectionTimer?.cancel()
         detectionTimer = null
-        try { stopForeground(true) } catch (_: Exception) {}
+        super.onDestroy()
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val chan = NotificationChannel(
-                CHANNEL_ID,
-                "Game Monitor",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            chan.enableLights(false)
-            chan.enableVibration(false)
+            val chan = NotificationChannel(CHANNEL_ID, "Game Monitor Service", NotificationManager.IMPORTANCE_LOW)
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(chan)
         }
     }
 
     private fun startForegroundNotification() {
+        updateNotification(null)
+    }
+
+    private fun updateNotification(gameName: String?) {
+        val content = if (gameName != null) "Monitoring: $gameName" else "Tracking gameplay in background..."
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle("Monitoring Active")
-            .setContentText("Tracking gameplay in background...")
+            .setContentText(content)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .build()
-
         startForeground(1, notification)
-        log("FOREGROUND NOTIFICATION ACTIVE")
-    }
-
-    private fun readParentOverride(pkg: String): String? {
-        return try {
-            val prefs = getSharedPreferences("installed_overrides", MODE_PRIVATE)
-            prefs.getString("override_pkg_$pkg", null)
-        } catch (e: Exception) {
-            log("Override read error: ${e.message}")
-            null
-        }
     }
 
     private fun isGameApp(pkg: String): Boolean {
-        val override = readParentOverride(pkg)
-        if (override != null) return override == "game"
+        return try {
+            val prefs = getSharedPreferences("installed_overrides", MODE_PRIVATE)
+            val override = prefs.getString("override_pkg_$pkg", null)
+            if (override != null) return override == "game"
+            val info = packageManager.getApplicationInfo(pkg, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && info.category == ApplicationInfo.CATEGORY_GAME) return true
+            val label = packageManager.getApplicationLabel(info).toString().lowercase()
+            val keywords = listOf("game", "battle", "fight", "arena", "clash", "royale", "pubg", "bgmi", "snake")
+            keywords.any { label.contains(it) || pkg.lowercase().contains(it) }
+        } catch (_: Exception) { false }
+    }
 
+    private fun resolveAppName(pkg: String): String {
         return try {
             val info = packageManager.getApplicationInfo(pkg, 0)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (info.category == ApplicationInfo.CATEGORY_GAME) return true
-            }
-            val label = packageManager.getApplicationLabel(info).toString().lowercase()
-            val keywords = listOf("game", "battle", "fight", "arena", "clash", "royale")
-            if (keywords.any { label.contains(it) }) return true
-            val pk = pkg.lowercase()
-            val pkgKeys = listOf("ff", "bgmi", "pubg", "clash", "arena")
-            if (pkgKeys.any { pk.contains(it) }) return true
-            false
-        } catch (_: Exception) {
-            false
-        }
+            packageManager.getApplicationLabel(info).toString()
+        } catch (e: Exception) { pkg }
     }
 
     private fun startDetectionLoop() {
         detectionTimer?.cancel()
         detectionTimer = Timer()
-
-        detectionTimer!!.scheduleAtFixedRate(
-            timerTask { detectApp() },
-            0,
-            4000
-        )
-
-        log("DETECTION LOOP STARTED (every 4s)")
+        detectionTimer!!.scheduleAtFixedRate(timerTask { detectApp() }, 0, 4000)
+        log("DETECTION LOOP STARTED")
     }
 
     private fun detectApp() {
         try {
             val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val now = System.currentTimeMillis()
-
-            val stats = usm.queryUsageStats(
-                UsageStatsManager.INTERVAL_DAILY,
-                now - 20000, now
-            )
+            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 20000, now)
 
             if (stats.isNullOrEmpty()) return
-
             val recent = stats.maxByOrNull { it.lastTimeUsed } ?: return
             val currentPackage = recent.packageName ?: return
 
             if (currentPackage.contains("launcher") || currentPackage.contains("systemui")) return
 
+            val currentIsGame = isGameApp(currentPackage)
+
             if (currentPackage != lastPackage) {
-                val nowTs = now
+                if (lastPackage != null && isGameApp(lastPackage!!)) {
+                    val appName = resolveAppName(lastPackage!!)
+                    processEvent(lastPackage!!, appName, "STOP", 0, now)
+                }
 
-                if (lastPackage != null) {
-                    val duration = (nowTs - lastStartTime) / 1000
-                    val isGame = isGameApp(lastPackage!!)
-
-                    if (isGame) {
-    val appName = resolveAppName(lastPackage!!)
-
-    insertEventToDatabase(
-        lastPackage!!,
-        appName,
-        lastStartTime,
-        nowTs,
-        duration
-    )
-
-    sendEventToFlutter(
-        lastPackage!!,
-        appName,
-        lastStartTime,
-        nowTs,
-        duration
-    )
-
-    log("GAME CLOSED → $appName ($lastPackage) | ${duration}s")
-}
-
+                if (currentIsGame) {
+                    val appName = resolveAppName(currentPackage)
+                    processEvent(currentPackage, appName, "START", 0, now)
+                    lastHeartbeatTime = now
+                    updateNotification(appName)
+                } else {
+                    updateNotification(null)
                 }
 
                 lastPackage = currentPackage
-                lastStartTime = nowTs
-                log("APP STARTED → $currentPackage")
+                lastStartTime = now
+            } 
+            else if (currentIsGame) {
+                if (now - lastHeartbeatTime >= 60000) {
+                    val appName = resolveAppName(currentPackage)
+                    processEvent(currentPackage, appName, "HEARTBEAT", 1, now)
+                    lastHeartbeatTime = now
+                }
             }
-
-        } catch (e: Exception) {
-            log("Detection error: ${e.message}")
-        }
+        } catch (e: Exception) { log("Detection error: ${e.message}") }
     }
 
-    private fun insertEventToDatabase(
-    pkg: String,
-    gameName: String,
-    start: Long,
-    end: Long,
-    duration: Long
-)
- {
-        try {
-            val db = openOrCreateDatabase("gaming_monitor.db", MODE_PRIVATE, null)
+    private fun processEvent(pkg: String, name: String, status: String, duration: Long, timestamp: Long) {
+        // Run network and DB tasks on background thread
+        Thread {
+            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            val childId = prefs.getString("flutter.selected_child_id", "child_101")?.replace("\"", "") ?: "child_101"
+            
+            // 1. Prepare JSON
+            val json = JSONObject()
+            json.put("user_id", childId)
+            json.put("childdeviceid", "android_$childId")
+            json.put("status", status)
+            json.put("package_name", pkg)
+            json.put("game_name", name)
+            json.put("duration", duration)
+            json.put("start_time", timestamp)
+            json.put("end_time", timestamp)
+            json.put("timestamp", timestamp)
 
-            db.execSQL("""
-                CREATE TABLE IF NOT EXISTS game_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT,
-                    package_name TEXT NOT NULL,
-                    game_name TEXT,
-                    genre TEXT,
-                    start_time TEXT NOT NULL,
-                    end_time TEXT NOT NULL,
-                    duration INTEGER NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    synced INTEGER NOT NULL DEFAULT 0
-                )
-            """)
+            // 2. Try to sync to backend
+            val success = sendHttpRequest(json.toString())
 
-            db.execSQL("""
-    INSERT INTO game_events (
-        user_id, package_name, game_name, start_time, end_time, duration, timestamp
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-""", arrayOf(
-    "demo_user_1",
-    pkg,
-    gameName,
-    start.toString(),
-    end.toString(),
-    duration,
-    end.toString()
-))
+            // 3. Save to Database (mark as synced if HTTP succeeded)
+            insertEventToDatabase(childId, pkg, name, status, duration, timestamp, if (success) 1 else 0)
 
+            // 4. If internet is back, try to clear out any old unsynced packets
+            if (success) syncPendingOldRecords(childId)
 
-log("DB EVENT SAVED → $gameName ($pkg) | ${duration}s")
-
-        } catch (e: Exception) {
-            log("DB INSERT ERROR: ${e.message}")
-        }
+            // 5. Tell Flutter to refresh UI (if it's awake)
+            sendEventToFlutter(pkg, name, status, duration, timestamp)
+            
+            log("NATIVE SYNC ($status): Success=$success")
+        }.start()
     }
 
-    private fun sendEventToFlutter(
-    pkg: String,
-    gameName: String,
-    start: Long,
-    end: Long,
-    duration: Long
-) {
-        try {
-            val engine = FlutterEngineCache.getInstance()["preloaded_engine"]
-            if (engine == null) {
-                log("Flutter engine missing → event saved but not forwarded")
-                return
-            }
+    private fun sendHttpRequest(jsonBody: String): Boolean {
+        return try {
+            val url = URL("https://gaming-twin-backend.onrender.com/events")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("X-API-KEY", "secret")
+            conn.connectTimeout = 8000
+            conn.doOutput = true
+            conn.outputStream.write(jsonBody.toByteArray())
+            val code = conn.responseCode
+            conn.disconnect()
+            code == 200 || code == 201
+        } catch (e: Exception) { false }
+    }
 
+    private fun syncPendingOldRecords(childId: String) {
+        var db: android.database.sqlite.SQLiteDatabase? = null
+        try {
+            db = openOrCreateDatabase("gaming_monitor.db", MODE_PRIVATE, null)
+            val cursor = db.rawQuery("SELECT * FROM game_events WHERE synced = 0 LIMIT 20", null)
+            if (cursor.moveToFirst()) {
+                do {
+                    val id = cursor.getInt(cursor.getColumnIndex("id"))
+                    val json = JSONObject()
+                    json.put("user_id", childId)
+                    json.put("childdeviceid", "android_$childId")
+                    json.put("status", cursor.getString(cursor.getColumnIndex("status")))
+                    json.put("package_name", cursor.getString(cursor.getColumnIndex("package_name")))
+                    json.put("game_name", cursor.getString(cursor.getColumnIndex("game_name")))
+                    json.put("duration", cursor.getInt(cursor.getColumnIndex("duration")))
+                    val ts = cursor.getString(cursor.getColumnIndex("timestamp")).toLong()
+                    json.put("start_time", ts)
+                    json.put("end_time", ts)
+                    json.put("timestamp", ts)
+
+                    if (sendHttpRequest(json.toString())) {
+                        db.execSQL("UPDATE game_events SET synced = 1 WHERE id = $id")
+                        log("RESTORED: Synced old offline event ID $id")
+                    }
+                } while (cursor.moveToNext())
+            }
+            cursor.close()
+        } catch (_: Exception) {} finally { db?.close() }
+    }
+
+    private fun insertEventToDatabase(userId: String, pkg: String, gameName: String, status: String, duration: Long, timestamp: Long, synced: Int) {
+        var db: android.database.sqlite.SQLiteDatabase? = null
+        try {
+            db = openOrCreateDatabase("gaming_monitor.db", MODE_PRIVATE, null)
+            db.execSQL("CREATE TABLE IF NOT EXISTS game_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, package_name TEXT NOT NULL, game_name TEXT, genre TEXT, start_time TEXT, end_time TEXT, duration INTEGER NOT NULL, timestamp TEXT NOT NULL, status TEXT, synced INTEGER NOT NULL DEFAULT 0)")
+            
+            db.execSQL("INSERT INTO game_events (user_id, package_name, game_name, duration, timestamp, status, synced) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(userId, pkg, gameName, duration, timestamp.toString(), status, synced))
+        } catch (e: Exception) { log("DB Error: ${e.message}") } 
+        finally { db?.close() }
+    }
+
+    private fun sendEventToFlutter(pkg: String, gameName: String, status: String, duration: Long, timestamp: Long) {
+        try {
+            val engine = FlutterEngineCache.getInstance()["preloaded_engine"] ?: return
             Handler(Looper.getMainLooper()).post {
-                MethodChannel(engine.dartExecutor.binaryMessenger, "game_events")
-                    .invokeMethod(
-                        "log_event",
-                        mapOf(
-    "package_name" to pkg,
-    "game_name" to gameName,
-    "start_time" to start,
-    "end_time" to end,
-    "duration" to duration,
-    "timestamp" to end
-)
-
-                    )
+                MethodChannel(engine.dartExecutor.binaryMessenger, "game_detection")
+                    .invokeMethod("log_event", mapOf("package_name" to pkg, "game_name" to gameName, "status" to status, "duration" to duration, "timestamp" to timestamp))
             }
-
-        } catch (e: Exception) {
-            log("sendEventToFlutter error: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
-    private fun log(msg: String) {
-        Log.i(LOG_TAG, "[$LOG_TAG] $msg")
-    }
-
+    private fun log(msg: String) { Log.i(LOG_TAG, "[$LOG_TAG] $msg") }
     override fun onBind(intent: Intent?): IBinder? = null
 }
