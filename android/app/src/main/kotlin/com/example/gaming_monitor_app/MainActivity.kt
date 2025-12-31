@@ -14,12 +14,21 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    override fun provideFlutterEngine(context: Context): FlutterEngine? {
+    return FlutterEngineCache.getInstance().get("preloaded_engine")
+}
+
+override fun getCachedEngineId(): String? {
+    return "preloaded_engine"
+}
+
 
     companion object {
         private const val TAG = "MainActivity"
