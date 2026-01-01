@@ -1,9 +1,7 @@
 // lib/services/native_event_handler.dart
 
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../database.dart';
-import '../screens/monitoring_screen.dart'; // ✅ Added
+import '../screens/monitoring_screen.dart';
 import 'sync_service.dart';
 
 class NativeEventHandler {
@@ -28,12 +26,15 @@ class NativeEventHandler {
       final status = call.arguments['status']?.toString() ?? 'HEARTBEAT';
       print("📥 [SIGNAL] Received $status from Kotlin");
 
-      // 1. Wake up the Sync Service to upload to backend immediately
-      SyncService.instance.syncPendingEvents(); 
+      // ✅ FIX 1: Await sync completion
+      await SyncService.instance.syncPendingEvents(); 
 
-      // 2. ✅ NEW: Tell the Monitoring Screen to refresh its UI NOW
+      // ✅ FIX 2: Small delay to ensure backend processed
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // ✅ FIX 3: Refresh UI after sync
       if (MonitoringScreenState.instance != null) {
-          MonitoringScreenState.instance!.refreshLocalSummary();
+        await MonitoringScreenState.instance!.refreshLocalSummary();
       }
 
       return {'status': 'ok'};
@@ -41,5 +42,11 @@ class NativeEventHandler {
       print("❌ NativeEventHandler error: $e");
       return {'status': 'error'};
     }
+  }
+  
+  void stop() {
+    _channel.setMethodCallHandler(null);
+    _started = false;
+    print("🛑 NativeEventHandler stopped");
   }
 }
