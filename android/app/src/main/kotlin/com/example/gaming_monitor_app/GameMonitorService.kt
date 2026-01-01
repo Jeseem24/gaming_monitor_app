@@ -22,9 +22,15 @@ class GameMonitorService : Service() {
     private val LOG_TAG = "GAME_SERVICE"
 
     private var lastPackage: String? = null
+    private var lastGamePackage: String? = null  // ✅ NEW: Track last GAME specifically
     private var lastStartTime: Long = 0
     private var lastHeartbeatTime: Long = 0 
     private var detectionTimer: Timer? = null
+    
+    // ✅ NEW: Debounce mechanism to prevent false STOP events
+    private var pendingStopPackage: String? = null
+    private var pendingStopTime: Long = 0
+    private val STOP_DEBOUNCE_MS = 8000L  // Wait 8 seconds before confirming STOP
 
     override fun onCreate() {
         super.onCreate()
@@ -41,9 +47,18 @@ class GameMonitorService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        val restartIntent = Intent(applicationContext, GameMonitorService::class.java).also { it.setPackage(packageName) }
-        val pendingIntent = PendingIntent.getService(this, 1, restartIntent, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-        (getSystemService(Context.ALARM_SERVICE) as AlarmManager).set(AlarmManager.RTC, System.currentTimeMillis() + 1000, pendingIntent)
+        val restartIntent = Intent(applicationContext, GameMonitorService::class.java).also { 
+            it.setPackage(packageName) 
+        }
+        val pendingIntent = PendingIntent.getService(
+            this, 1, restartIntent, 
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        )
+        (getSystemService(Context.ALARM_SERVICE) as AlarmManager).set(
+            AlarmManager.RTC, 
+            System.currentTimeMillis() + 1000, 
+            pendingIntent
+        )
         log("TASK REMOVED → PERSISTENCE ALARM SET")
     }
 
@@ -56,7 +71,11 @@ class GameMonitorService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val chan = NotificationChannel(CHANNEL_ID, "Game Monitor Service", NotificationManager.IMPORTANCE_LOW)
+            val chan = NotificationChannel(
+                CHANNEL_ID, 
+                "Game Monitor Service", 
+                NotificationManager.IMPORTANCE_LOW
+            )
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(chan)
         }
@@ -80,13 +99,29 @@ class GameMonitorService : Service() {
 
     private fun isGameApp(pkg: String): Boolean {
         return try {
+            // Skip system packages that cause false detections
+            if (pkg.contains("launcher") || 
+                pkg.contains("systemui") || 
+                pkg.contains("nexuslauncher") ||
+                pkg.contains("home") ||
+                pkg == packageName) {  // Skip our own app
+                return false
+            }
+            
             val prefs = getSharedPreferences("installed_overrides", MODE_PRIVATE)
             val override = prefs.getString("override_pkg_$pkg", null)
             if (override != null) return override == "game"
+            
             val info = packageManager.getApplicationInfo(pkg, 0)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && info.category == ApplicationInfo.CATEGORY_GAME) return true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && 
+                info.category == ApplicationInfo.CATEGORY_GAME) return true
+            
             val label = packageManager.getApplicationLabel(info).toString().lowercase()
-            val keywords = listOf("game", "battle", "fight", "arena", "clash", "royale", "pubg", "bgmi", "snake")
+            val keywords = listOf(
+                "game", "battle", "fight", "arena", "clash", "royale", 
+                "pubg", "bgmi", "snake", "chess", "puzzle", "racing",
+                "shooter", "rpg", "mmorpg", "casino", "slots", "poker"
+            )
             keywords.any { label.contains(it) || pkg.lowercase().contains(it) }
         } catch (_: Exception) { false }
     }
@@ -109,75 +144,190 @@ class GameMonitorService : Service() {
         try {
             val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val now = System.currentTimeMillis()
-            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 20000, now)
+            val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 10000, now)
 
-            if (stats.isNullOrEmpty()) return
+            if (stats.isNullOrEmpty()) {
+                log("No usage stats available")
+                return
+            }
+            
             val recent = stats.maxByOrNull { it.lastTimeUsed } ?: return
             val currentPackage = recent.packageName ?: return
 
-            if (currentPackage.contains("launcher") || currentPackage.contains("systemui")) return
+            // ✅ Skip system packages entirely
+            if (currentPackage.contains("launcher") || 
+                currentPackage.contains("systemui") ||
+                currentPackage.contains("inputmethod") ||
+                currentPackage.contains("keyboard")) {
+                return
+            }
 
             val currentIsGame = isGameApp(currentPackage)
+            
+            // ✅ NEW: Handle pending STOP with debounce
+            if (pendingStopPackage != null) {
+                if (currentPackage == pendingStopPackage || 
+                    (currentIsGame && currentPackage == lastGamePackage)) {
+                    // User went back to the game - cancel pending stop
+                    log("DEBOUNCE: User returned to game, cancelling STOP")
+                    pendingStopPackage = null
+                    pendingStopTime = 0
+                } else if (now - pendingStopTime >= STOP_DEBOUNCE_MS) {
+                    // Debounce time passed - confirm STOP
+                    val stoppedPackage = pendingStopPackage!!
+                    val appName = resolveAppName(stoppedPackage)
+                    val sessionDurationSeconds = if (lastStartTime > 0) {
+                        ((pendingStopTime - lastStartTime) / 1000).coerceAtLeast(0)
+                    } else { 0L }
+                    
+                    log("DEBOUNCE: Confirmed STOP for $appName after ${sessionDurationSeconds}s")
+                    
+                    processEvent(
+                        pkg = stoppedPackage,
+                        name = appName,
+                        status = "STOP",
+                        durationSeconds = sessionDurationSeconds,
+                        startTime = lastStartTime,
+                        endTime = pendingStopTime
+                    )
+                    
+                    lastGamePackage = null
+                    lastStartTime = 0
+                    pendingStopPackage = null
+                    pendingStopTime = 0
+                    updateNotification(null)
+                }
+            }
 
+            // ✅ Detect package change
             if (currentPackage != lastPackage) {
-                if (lastPackage != null && isGameApp(lastPackage!!)) {
-                    val appName = resolveAppName(lastPackage!!)
-                    processEvent(lastPackage!!, appName, "STOP", 0, now)
+                log("Package changed: $lastPackage → $currentPackage (isGame: $currentIsGame)")
+                
+                // If we were playing a game and switched to something else
+                if (lastGamePackage != null && !currentIsGame && currentPackage != lastGamePackage) {
+                    // Don't send STOP immediately - set pending with debounce
+                    if (pendingStopPackage == null) {
+                        pendingStopPackage = lastGamePackage
+                        pendingStopTime = now
+                        log("DEBOUNCE: Pending STOP for $lastGamePackage (waiting ${STOP_DEBOUNCE_MS}ms)")
+                    }
                 }
 
-                if (currentIsGame) {
+                // If current app is a game and it's NEW (not the pending stop)
+                if (currentIsGame && currentPackage != pendingStopPackage) {
+                    // If there was a pending stop for a different game, process it immediately
+                    if (pendingStopPackage != null && pendingStopPackage != currentPackage) {
+                        val stoppedPkg = pendingStopPackage!!
+                        val stoppedName = resolveAppName(stoppedPkg)
+                        val sessionDuration = if (lastStartTime > 0) {
+                            ((now - lastStartTime) / 1000).coerceAtLeast(0)
+                        } else { 0L }
+                        
+                        processEvent(
+                            pkg = stoppedPkg,
+                            name = stoppedName,
+                            status = "STOP",
+                            durationSeconds = sessionDuration,
+                            startTime = lastStartTime,
+                            endTime = now
+                        )
+                        pendingStopPackage = null
+                        pendingStopTime = 0
+                    }
+                    
+                    // Start tracking new game
                     val appName = resolveAppName(currentPackage)
-                    processEvent(currentPackage, appName, "START", 0, now)
+                    lastGamePackage = currentPackage
+                    lastStartTime = now
                     lastHeartbeatTime = now
+                    
+                    processEvent(
+                        pkg = currentPackage,
+                        name = appName,
+                        status = "START",
+                        durationSeconds = 0,
+                        startTime = now,
+                        endTime = now
+                    )
                     updateNotification(appName)
-                } else {
-                    updateNotification(null)
+                    log("GAME STARTED: $appName")
                 }
 
                 lastPackage = currentPackage
-                lastStartTime = now
             } 
-            else if (currentIsGame) {
+            // ✅ Same game still running - send heartbeat
+            else if (currentIsGame && currentPackage == lastGamePackage) {
+                // Cancel any pending stop since game is still active
+                if (pendingStopPackage == currentPackage) {
+                    pendingStopPackage = null
+                    pendingStopTime = 0
+                }
+                
+                // Send heartbeat every 60 seconds
                 if (now - lastHeartbeatTime >= 60000) {
                     val appName = resolveAppName(currentPackage)
-                    processEvent(currentPackage, appName, "HEARTBEAT", 1, now)
+                    val heartbeatDurationSeconds = ((now - lastHeartbeatTime) / 1000).coerceAtLeast(60)
+                    
+                    processEvent(
+                        pkg = currentPackage,
+                        name = appName,
+                        status = "HEARTBEAT",
+                        durationSeconds = heartbeatDurationSeconds,
+                        startTime = lastStartTime,
+                        endTime = now
+                    )
                     lastHeartbeatTime = now
+                    log("HEARTBEAT: $appName (${heartbeatDurationSeconds}s)")
                 }
             }
-        } catch (e: Exception) { log("Detection error: ${e.message}") }
+        } catch (e: Exception) { 
+            log("Detection error: ${e.message}") 
+        }
     }
 
-    private fun processEvent(pkg: String, name: String, status: String, duration: Long, timestamp: Long) {
-        // Run network and DB tasks on background thread
+    private fun processEvent(
+        pkg: String, 
+        name: String, 
+        status: String, 
+        durationSeconds: Long, 
+        startTime: Long, 
+        endTime: Long
+    ) {
         Thread {
             val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
-            val childId = prefs.getString("flutter.selected_child_id", "child_101")?.replace("\"", "") ?: "child_101"
+            val childId = prefs.getString("flutter.selected_child_id", "child_101")
+                ?.replace("\"", "") ?: "child_101"
             
-            // 1. Prepare JSON
+            // Convert to minutes for backend
+            val durationMinutes = when (status) {
+                "START" -> 0
+                "HEARTBEAT" -> 1
+                "STOP" -> (durationSeconds / 60).coerceAtLeast(1).toInt()
+                else -> 0
+            }
+            
             val json = JSONObject()
             json.put("user_id", childId)
             json.put("childdeviceid", "android_$childId")
             json.put("status", status)
             json.put("package_name", pkg)
             json.put("game_name", name)
-            json.put("duration", duration)
-            json.put("start_time", timestamp)
-            json.put("end_time", timestamp)
-            json.put("timestamp", timestamp)
+            json.put("duration", durationMinutes)
+            json.put("start_time", startTime)
+            json.put("end_time", endTime)
+            json.put("timestamp", endTime)
 
-            // 2. Try to sync to backend
             val success = sendHttpRequest(json.toString())
-
-            // 3. Save to Database (mark as synced if HTTP succeeded)
-            insertEventToDatabase(childId, pkg, name, status, duration, timestamp, if (success) 1 else 0)
-
-            // 4. If internet is back, try to clear out any old unsynced packets
-            if (success) syncPendingOldRecords(childId)
-
-            // 5. Tell Flutter to refresh UI (if it's awake)
-            sendEventToFlutter(pkg, name, status, duration, timestamp)
             
-            log("NATIVE SYNC ($status): Success=$success")
+            insertEventToDatabase(
+                childId, pkg, name, status, durationSeconds, 
+                startTime, endTime, if (success) 1 else 0
+            )
+
+            if (success) syncPendingOldRecords(childId)
+            sendEventToFlutter(pkg, name, status, durationSeconds, endTime)
+            
+            log("SYNC ($status): $name, Duration=${durationMinutes}min, Success=$success")
         }.start()
     }
 
@@ -188,13 +338,17 @@ class GameMonitorService : Service() {
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("X-API-KEY", "secret")
-            conn.connectTimeout = 8000
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
             conn.doOutput = true
             conn.outputStream.write(jsonBody.toByteArray())
             val code = conn.responseCode
             conn.disconnect()
             code == 200 || code == 201
-        } catch (e: Exception) { false }
+        } catch (e: Exception) { 
+            log("HTTP Error: ${e.message}")
+            false 
+        }
     }
 
     private fun syncPendingOldRecords(childId: String) {
@@ -202,41 +356,97 @@ class GameMonitorService : Service() {
         try {
             db = openOrCreateDatabase("gaming_monitor.db", MODE_PRIVATE, null)
             val cursor = db.rawQuery("SELECT * FROM game_events WHERE synced = 0 LIMIT 20", null)
+            
             if (cursor.moveToFirst()) {
                 do {
-                    val id = cursor.getInt(cursor.getColumnIndex("id"))
+                    val id = cursor.getInt(cursor.getColumnIndexOrThrow("id"))
+                    val status = cursor.getString(cursor.getColumnIndexOrThrow("status")) ?: "HEARTBEAT"
+                    val durationSeconds = cursor.getLong(cursor.getColumnIndexOrThrow("duration"))
+                    
+                    val durationMinutes = when (status) {
+                        "START" -> 0
+                        "HEARTBEAT" -> 1
+                        "STOP" -> (durationSeconds / 60).coerceAtLeast(1)
+                        else -> 0
+                    }
+                    
+                    val startTime = try {
+                        cursor.getLong(cursor.getColumnIndexOrThrow("start_time"))
+                    } catch (e: Exception) {
+                        cursor.getLong(cursor.getColumnIndexOrThrow("timestamp"))
+                    }
+                    
+                    val endTime = try {
+                        cursor.getLong(cursor.getColumnIndexOrThrow("end_time"))
+                    } catch (e: Exception) {
+                        cursor.getLong(cursor.getColumnIndexOrThrow("timestamp"))
+                    }
+
                     val json = JSONObject()
                     json.put("user_id", childId)
                     json.put("childdeviceid", "android_$childId")
-                    json.put("status", cursor.getString(cursor.getColumnIndex("status")))
-                    json.put("package_name", cursor.getString(cursor.getColumnIndex("package_name")))
-                    json.put("game_name", cursor.getString(cursor.getColumnIndex("game_name")))
-                    json.put("duration", cursor.getInt(cursor.getColumnIndex("duration")))
-                    val ts = cursor.getString(cursor.getColumnIndex("timestamp")).toLong()
-                    json.put("start_time", ts)
-                    json.put("end_time", ts)
-                    json.put("timestamp", ts)
+                    json.put("status", status)
+                    json.put("package_name", cursor.getString(cursor.getColumnIndexOrThrow("package_name")))
+                    json.put("game_name", cursor.getString(cursor.getColumnIndexOrThrow("game_name")))
+                    json.put("duration", durationMinutes)
+                    json.put("start_time", startTime)
+                    json.put("end_time", endTime)
+                    json.put("timestamp", endTime)
 
                     if (sendHttpRequest(json.toString())) {
                         db.execSQL("UPDATE game_events SET synced = 1 WHERE id = $id")
-                        log("RESTORED: Synced old offline event ID $id")
+                        log("RESTORED: Synced offline event ID $id")
                     }
                 } while (cursor.moveToNext())
             }
             cursor.close()
-        } catch (_: Exception) {} finally { db?.close() }
+        } catch (e: Exception) {
+            log("Sync pending error: ${e.message}")
+        } finally { 
+            db?.close() 
+        }
     }
 
-    private fun insertEventToDatabase(userId: String, pkg: String, gameName: String, status: String, duration: Long, timestamp: Long, synced: Int) {
+    private fun insertEventToDatabase(
+        userId: String, 
+        pkg: String, 
+        gameName: String, 
+        status: String, 
+        durationSeconds: Long,
+        startTime: Long,
+        endTime: Long,
+        synced: Int
+    ) {
         var db: android.database.sqlite.SQLiteDatabase? = null
         try {
             db = openOrCreateDatabase("gaming_monitor.db", MODE_PRIVATE, null)
-            db.execSQL("CREATE TABLE IF NOT EXISTS game_events (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, package_name TEXT NOT NULL, game_name TEXT, genre TEXT, start_time TEXT, end_time TEXT, duration INTEGER NOT NULL, timestamp TEXT NOT NULL, status TEXT, synced INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("""
+                CREATE TABLE IF NOT EXISTS game_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    user_id TEXT, 
+                    package_name TEXT NOT NULL, 
+                    game_name TEXT, 
+                    genre TEXT, 
+                    start_time INTEGER,
+                    end_time INTEGER,
+                    duration INTEGER NOT NULL, 
+                    timestamp INTEGER NOT NULL,
+                    status TEXT, 
+                    synced INTEGER NOT NULL DEFAULT 0
+                )
+            """)
             
-            db.execSQL("INSERT INTO game_events (user_id, package_name, game_name, duration, timestamp, status, synced) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                arrayOf(userId, pkg, gameName, duration, timestamp.toString(), status, synced))
-        } catch (e: Exception) { log("DB Error: ${e.message}") } 
-        finally { db?.close() }
+            db.execSQL(
+                """INSERT INTO game_events 
+                   (user_id, package_name, game_name, duration, start_time, end_time, timestamp, status, synced) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                arrayOf(userId, pkg, gameName, durationSeconds, startTime, endTime, endTime, status, synced)
+            )
+        } catch (e: Exception) { 
+            log("DB Error: ${e.message}") 
+        } finally { 
+            db?.close() 
+        }
     }
 
     private fun sendEventToFlutter(pkg: String, gameName: String, status: String, duration: Long, timestamp: Long) {
@@ -244,11 +454,20 @@ class GameMonitorService : Service() {
             val engine = FlutterEngineCache.getInstance()["preloaded_engine"] ?: return
             Handler(Looper.getMainLooper()).post {
                 MethodChannel(engine.dartExecutor.binaryMessenger, "game_detection")
-                    .invokeMethod("log_event", mapOf("package_name" to pkg, "game_name" to gameName, "status" to status, "duration" to duration, "timestamp" to timestamp))
+                    .invokeMethod("log_event", mapOf(
+                        "package_name" to pkg, 
+                        "game_name" to gameName, 
+                        "status" to status, 
+                        "duration" to duration, 
+                        "timestamp" to timestamp
+                    ))
             }
         } catch (_: Exception) {}
     }
 
-    private fun log(msg: String) { Log.i(LOG_TAG, "[$LOG_TAG] $msg") }
+    private fun log(msg: String) { 
+        Log.i(LOG_TAG, "[$LOG_TAG] $msg") 
+    }
+    
     override fun onBind(intent: Intent?): IBinder? = null
 }
