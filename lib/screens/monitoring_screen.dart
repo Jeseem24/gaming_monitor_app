@@ -261,7 +261,13 @@ class MonitoringScreenState extends State<MonitoringScreen>
       }
       final db = await GameDatabase.instance.database;
       final startOfDay = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day).millisecondsSinceEpoch;
-      final res = await db.rawQuery('SELECT SUM(duration) as total FROM game_events WHERE CAST(timestamp AS INTEGER) >= ?', [startOfDay]);
+final res = await db.rawQuery(
+  '''SELECT SUM(duration) as total 
+     FROM game_events 
+     WHERE CAST(timestamp AS INTEGER) >= ? 
+     AND status = 'STOP' ''', 
+  [startOfDay]
+);
       if (mounted) {
         final total = res.first['total'];
         final sec = (total is int) ? total : (total as num?)?.toInt() ?? 0;
