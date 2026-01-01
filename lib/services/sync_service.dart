@@ -59,38 +59,60 @@ class SyncService {
   }
 
   Future<bool> _uploadSingleEvent(Map<String, dynamic> event, String childId) async {
-    try {
-      final url = '$_baseUrl/events';
-      final status = event['status']?.toString() ?? "HEARTBEAT";
-      final packageName = event['package_name']?.toString();
-      final gameName = event['game_name']?.toString() ?? packageName ?? "Unknown";
-      if (packageName == null) return true;
+  try {
+    final url = '$_baseUrl/events';
+    final status = event['status']?.toString() ?? "HEARTBEAT";
+    final packageName = event['package_name']?.toString();
+    final gameName = event['game_name']?.toString() ?? packageName ?? "Unknown";
+    if (packageName == null) return true;
 
-      int parseMs(dynamic v) => (v is num) ? v.toInt() : (int.tryParse(v?.toString() ?? '') ?? DateTime.now().millisecondsSinceEpoch);
+    int parseMs(dynamic v) => (v is num) ? v.toInt() : (int.tryParse(v?.toString() ?? '') ?? DateTime.now().millisecondsSinceEpoch);
 
-      final timestamp = parseMs(event['timestamp']);
-      final startTime = (event['start_time'] != null) ? parseMs(event['start_time']) : timestamp;
-      final endTime = (event['end_time'] != null) ? parseMs(event['end_time']) : timestamp;
+    final timestamp = parseMs(event['timestamp']);
+    final startTime = parseMs(event['start_time'] ?? timestamp);
+    final endTime = parseMs(event['end_time'] ?? timestamp);
 
-      int durationRaw = (event['duration'] is num) ? (event['duration'] as num).toInt() : 0;
-      int durationInMinutes = (status == "HEARTBEAT") ? 1 : ((status == "STOP") ? (durationRaw / 60).ceil() : 0);
+    // ✅ FIX: Duration is stored in SECONDS from Kotlin
+    int durationSeconds = (event['duration'] is num) ? (event['duration'] as num).toInt() : 0;
+    
+    int durationInMinutes;
+    switch (status) {
+      case "START":
+        durationInMinutes = 0;
+        break;
+      case "HEARTBEAT":
+        durationInMinutes = 1;
+        break;
+      case "STOP":
+        durationInMinutes = (durationSeconds / 60).ceil().clamp(1, 999);  // ✅ At least 1 minute
+        break;
+      default:
+        durationInMinutes = 0;
+    }
 
-      final payload = {
-        "user_id": childId,
-        "childdeviceid": "android_$childId",
-        "status": status,
-        "package_name": packageName,
-        "game_name": gameName,
-        "duration": durationInMinutes,
-        "start_time": startTime,
-        "end_time": endTime,
-        "timestamp": timestamp,
-      };
+    final payload = {
+      "user_id": childId,
+      "childdeviceid": "android_$childId",
+      "status": status,
+      "package_name": packageName,
+      "game_name": gameName,
+      "duration": durationInMinutes,
+      "start_time": startTime,
+      "end_time": endTime,
+      "timestamp": timestamp,
+    };
 
-      final res = await http.post(Uri.parse(url), headers: _defaultHeaders, body: jsonEncode(payload)).timeout(const Duration(seconds: 10));
-      if (res.statusCode == 200 || res.statusCode == 201) return true;
-      if (res.statusCode == 422 || res.statusCode == 400) return true; 
-      return false;
-    } catch (e) { return false; }
+    final res = await http.post(
+      Uri.parse(url), 
+      headers: _defaultHeaders, 
+      body: jsonEncode(payload)
+    ).timeout(const Duration(seconds: 10));
+    
+    if (res.statusCode == 200 || res.statusCode == 201) return true;
+    if (res.statusCode == 422 || res.statusCode == 400) return true;
+    return false;
+  } catch (e) { 
+    return false; 
   }
+}
 }
